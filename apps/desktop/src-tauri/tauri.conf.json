@@ -5,18 +5,18 @@
   "identifier": "dev.veyra.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "Veyra — Reversible execution",
+        "title": "Veyra - Reversible execution",
         "width": 1440,
         "height": 900,
-        "minWidth": 900,
-        "minHeight": 640
+        "minWidth": 760,
+        "minHeight": 600
       }
     ],
     "security": {

@@ -45,3 +45,26 @@ node --test packages/protocol-schema/tests/schema.test.mjs
 ```
 
 Known limitations and next bottleneck: crash-boundary injection and cross-process concurrency need broader integration coverage; HTTP compensation remains explicitly separate authority; the TypeScript SDK, real Tauri UI, docs, eval suite, and release gates are next. Native Tauri compilation on this host requires the documented MSVC C++ Build Tools installation.
+
+## 2026-08-23 - SDK and desktop control plane
+
+- Added a strict ESM TypeScript SDK covering every `/v1` endpoint, with enforced loopback URLs, bearer authentication, encoded identifiers, typed responses, and safe API errors.
+- Built the React/Tauri desktop control plane against that SDK and the same real daemon used by the CLI. It includes intent entry, transaction navigation, effect/diff inspection, exact-scope risk approval, causal timeline, receipt and verification evidence, rollback, audit search, manual-recovery/error/loading/empty states, responsive layouts, keyboard focus, and dark/light themes.
+- The Tauri host now creates a durable local kernel, binds an ephemeral loopback listener, and passes connection material to the trusted webview command boundary. Standard application icons were generated from the source `icon.svg` mark.
+- Replaced the custom-adapter placeholder with a complete, tested out-of-tree reversible counter example that refuses clobbering rollback.
+- Ran a real Playwright flow using Microsoft Edge and a live Rust daemon. It created, preflighted, approved, executed, verified, inspected, and rolled back a transaction. Screenshots were inspected at 1440x900 and 760x900; a small approval-copy spacing issue was found and fixed.
+
+Commands run successfully:
+
+```text
+pnpm install
+pnpm check
+pnpm test
+pnpm build
+VEYRA_E2E_TOKEN_FILE=<absolute-token-path> pnpm --filter @veyra/desktop test:e2e
+cargo +stable-x86_64-pc-windows-gnu check -p veyra-desktop
+cargo +stable-x86_64-pc-windows-gnu test -p veyra-custom-adapter-example
+cargo +stable-x86_64-pc-windows-gnu clippy -p veyra-custom-adapter-example --all-targets -- -D warnings
+```
+
+Known limitations and next bottleneck: the visual E2E requires a running daemon and installed Edge/Chrome; native Windows checks use the installed GNU toolchain because MSVC Build Tools are absent. Security/crash eval expansion, documentation, CI/release assets, and the final skeptical review remain.

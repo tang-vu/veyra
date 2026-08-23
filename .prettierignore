@@ -4,3 +4,4 @@ dist
 pnpm-lock.yaml
 packages/protocol-schema/schema
 evals/results
+goal.md

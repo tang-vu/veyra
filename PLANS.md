@@ -17,10 +17,10 @@ Status legend: `[ ]` pending, `[~]` active, `[x]` verified.
 
 ## Milestone 3 — clients and remaining adapters
 
-- [~] Build the versioned daemon API, machine-readable CLI, and TypeScript SDK (API and CLI verified; SDK pending).
+- [x] Build the versioned daemon API, machine-readable CLI, and TypeScript SDK.
 - [x] Build HTTP and disabled-by-default process adapters with strict policy and limits.
 - [x] Add deterministic and OpenAI-compatible planners with strict plan validation.
-- [ ] Connect the Tauri desktop control plane to the real daemon API.
+- [x] Connect the Tauri desktop control plane to the real daemon API.
 
 ## Milestone 4 — hardening and release quality
 

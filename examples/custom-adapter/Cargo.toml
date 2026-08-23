@@ -9,9 +9,13 @@ publish = false
 
 [dependencies]
 async-trait.workspace = true
+chrono.workspace = true
 serde_json.workspace = true
 veyra-executor = { path = "../../crates/veyra-executor" }
 veyra-protocol = { path = "../../crates/veyra-protocol" }
+
+[dev-dependencies]
+tokio.workspace = true
 
 [lints]
 workspace = true

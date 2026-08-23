@@ -12,6 +12,7 @@ publish = false
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
+serde.workspace = true
 tauri = { version = "2.11.5", features = [] }
 tokio.workspace = true
 veyra-server = { path = "../../../crates/veyra-server" }

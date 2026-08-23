@@ -4978,7 +4978,9 @@ name = "veyra-custom-adapter-example"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "serde_json",
+ "tokio",
  "veyra-executor",
  "veyra-protocol",
 ]
@@ -4987,6 +4989,7 @@ dependencies = [
 name = "veyra-desktop"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "tauri",
  "tauri-build",
  "tokio",

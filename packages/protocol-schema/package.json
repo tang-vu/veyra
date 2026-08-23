@@ -4,7 +4,11 @@
   "private": false,
   "description": "Generated JSON Schema and compatibility fixtures for Veyra protocol v1",
   "license": "Apache-2.0",
-  "files": ["schema", "fixtures", "README.md"],
+  "files": [
+    "schema",
+    "fixtures",
+    "README.md"
+  ],
   "scripts": {
     "build": "node ./scripts/verify-generated.mjs",
     "check": "node ./scripts/verify-generated.mjs",

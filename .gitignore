@@ -1,8 +1,9 @@
-/target/
-/node_modules/
+target/
+node_modules/
 /.veyra/
-/dist/
-/.vite/
+dist/
+.vite/
+*.tsbuildinfo
 /playwright-report/
 /test-results/
 *.db
