@@ -1,0 +1,89 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Receipt",
+  "description": "Kernel-issued, authenticated evidence of an adapter result.",
+  "type": "object",
+  "properties": {
+    "authentication": {
+      "description": "HMAC-SHA-256 over the canonical receipt payload, excluding this field.",
+      "type": "string"
+    },
+    "effect_digest": {
+      "description": "Immutable effect digest.",
+      "type": "string"
+    },
+    "effect_id": {
+      "description": "Effect binding.",
+      "$ref": "#/$defs/EffectId"
+    },
+    "execution_id": {
+      "description": "Execution being attested.",
+      "$ref": "#/$defs/ExecutionId"
+    },
+    "id": {
+      "description": "Stable receipt identifier.",
+      "$ref": "#/$defs/ReceiptId"
+    },
+    "issued_at": {
+      "description": "Issuance timestamp.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "outcome": {
+      "description": "Stable adapter outcome code.",
+      "type": "string"
+    },
+    "result": {
+      "description": "Redacted, bounded adapter result."
+    },
+    "result_digest": {
+      "description": "Digest of redacted adapter result data.",
+      "type": "string"
+    },
+    "signer_key_id": {
+      "description": "Local receipt authentication key identifier.",
+      "type": "string"
+    },
+    "transaction_id": {
+      "description": "Transaction binding.",
+      "$ref": "#/$defs/TransactionId"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "execution_id",
+    "transaction_id",
+    "effect_id",
+    "effect_digest",
+    "outcome",
+    "result_digest",
+    "result",
+    "issued_at",
+    "signer_key_id",
+    "authentication"
+  ],
+  "$defs": {
+    "EffectId": {
+      "description": "Stable identifier for a `EffectId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "ExecutionId": {
+      "description": "Stable identifier for a `ExecutionId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "ReceiptId": {
+      "description": "Stable identifier for a `ReceiptId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "TransactionId": {
+      "description": "Stable identifier for a `TransactionId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

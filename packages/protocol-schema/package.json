@@ -1,0 +1,14 @@
+{
+  "name": "@veyra/protocol-schema",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Generated JSON Schema and compatibility fixtures for Veyra protocol v1",
+  "license": "Apache-2.0",
+  "files": ["schema", "fixtures", "README.md"],
+  "scripts": {
+    "build": "node ./scripts/verify-generated.mjs",
+    "check": "node ./scripts/verify-generated.mjs",
+    "lint": "node ./scripts/verify-generated.mjs",
+    "test": "node --test ./tests/*.test.mjs"
+  }
+}

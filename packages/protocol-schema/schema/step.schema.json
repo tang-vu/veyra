@@ -1,0 +1,830 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Step",
+  "description": "A causal grouping of one or more effects.",
+  "type": "object",
+  "properties": {
+    "effects": {
+      "description": "Ordered effects in this step.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Effect"
+      }
+    },
+    "id": {
+      "description": "Stable step identifier.",
+      "$ref": "#/$defs/StepId"
+    },
+    "summary": {
+      "description": "Human-readable rationale.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "summary",
+    "effects"
+  ],
+  "$defs": {
+    "CapabilityRequirement": {
+      "description": "Capability shape requested by an effect.",
+      "type": "object",
+      "properties": {
+        "adapter": {
+          "description": "Adapter name.",
+          "type": "string"
+        },
+        "constraints": {
+          "description": "Constraint names the policy engine must understand.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "operation": {
+          "description": "Operation name.",
+          "type": "string"
+        },
+        "resource": {
+          "description": "Exact requested resource.",
+          "$ref": "#/$defs/ResourceScope"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "adapter",
+        "operation",
+        "resource"
+      ]
+    },
+    "CausalParent": {
+      "description": "Causal ancestry used in the journal and UI timeline.",
+      "type": "object",
+      "properties": {
+        "effect_id": {
+          "description": "Optional prior effect whose output directly caused this effect.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EffectId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "intent_id": {
+          "description": "Intent that caused this effect.",
+          "$ref": "#/$defs/IntentId"
+        },
+        "plan_id": {
+          "description": "Plan that proposed this effect.",
+          "$ref": "#/$defs/PlanId"
+        },
+        "step_id": {
+          "description": "Step containing this effect.",
+          "$ref": "#/$defs/StepId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "intent_id",
+        "plan_id",
+        "step_id"
+      ]
+    },
+    "Condition": {
+      "description": "A typed condition evaluated before or after execution.",
+      "oneOf": [
+        {
+          "description": "A relative filesystem path must exist or not exist.",
+          "type": "object",
+          "properties": {
+            "expected": {
+              "description": "Required existence state.",
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "file_exists"
+            },
+            "path": {
+              "description": "Workspace-relative normalized path.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path",
+            "expected"
+          ]
+        },
+        {
+          "description": "File contents must have a precise SHA-256 digest.",
+          "type": "object",
+          "properties": {
+            "digest": {
+              "description": "Required lowercase SHA-256 digest.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "file_sha256"
+            },
+            "path": {
+              "description": "Workspace-relative normalized path.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path",
+            "digest"
+          ]
+        },
+        {
+          "description": "An HTTP response status must match.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "http_status"
+            },
+            "status": {
+              "description": "Required HTTP status code.",
+              "type": "integer",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "status"
+          ]
+        },
+        {
+          "description": "Adapter output must have the declared digest.",
+          "type": "object",
+          "properties": {
+            "digest": {
+              "description": "Required lowercase SHA-256 digest.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "output_sha256"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "digest"
+          ]
+        },
+        {
+          "description": "Versioned third-party condition.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "custom"
+            },
+            "name": {
+              "description": "Versioned condition name.",
+              "type": "string"
+            },
+            "parameters": {
+              "description": "Secret-safe condition parameters."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name",
+            "parameters"
+          ]
+        }
+      ]
+    },
+    "Effect": {
+      "description": "The complete immutable effect proposal that policy and approval bind to.",
+      "type": "object",
+      "properties": {
+        "adapter": {
+          "description": "Registered adapter name.",
+          "type": "string"
+        },
+        "causal_parent": {
+          "description": "Causal ancestry.",
+          "$ref": "#/$defs/CausalParent"
+        },
+        "expected_postconditions": {
+          "description": "Postconditions required for a committed transaction.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Condition"
+          }
+        },
+        "id": {
+          "description": "Stable effect identifier.",
+          "$ref": "#/$defs/EffectId"
+        },
+        "idempotency_key": {
+          "description": "Stable key used to suppress duplicate execution.",
+          "type": "string"
+        },
+        "inputs": {
+          "description": "Typed public data and opaque secret references.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/InputValue"
+          }
+        },
+        "inverse": {
+          "description": "Optional inverse/compensation request.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperationSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operation": {
+          "description": "Adapter operation name.",
+          "type": "string"
+        },
+        "preconditions": {
+          "description": "Preconditions rechecked immediately before execution.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Condition"
+          }
+        },
+        "preview": {
+          "description": "Structured preview shown to the approver.",
+          "$ref": "#/$defs/Preview"
+        },
+        "principal_id": {
+          "description": "Principal on whose behalf the effect would execute.",
+          "$ref": "#/$defs/PrincipalId"
+        },
+        "required_capabilities": {
+          "description": "Capabilities the effect claims it needs. Policy independently verifies them.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CapabilityRequirement"
+          }
+        },
+        "resource": {
+          "description": "Exact resource affected.",
+          "$ref": "#/$defs/ResourceScope"
+        },
+        "retry": {
+          "description": "Bounded retry policy.",
+          "$ref": "#/$defs/RetryPolicy"
+        },
+        "reversibility": {
+          "description": "Honest rollback or compensation class.",
+          "$ref": "#/$defs/Reversibility"
+        },
+        "risk": {
+          "description": "Declared risk used by approval policy.",
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "schema_version": {
+          "description": "Protocol identifier.",
+          "type": "string"
+        },
+        "timeout_ms": {
+          "description": "Hard adapter timeout.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "id",
+        "causal_parent",
+        "principal_id",
+        "adapter",
+        "operation",
+        "inputs",
+        "resource",
+        "preconditions",
+        "expected_postconditions",
+        "risk",
+        "reversibility",
+        "preview",
+        "idempotency_key",
+        "timeout_ms",
+        "retry",
+        "required_capabilities"
+      ]
+    },
+    "EffectId": {
+      "description": "Stable identifier for a `EffectId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "InputValue": {
+      "description": "A typed input entry that is safe to serialize into plans and audit records.",
+      "oneOf": [
+        {
+          "description": "Non-sensitive data that may appear in previews and audit exports.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "public"
+            },
+            "value": {
+              "description": "JSON value known to be non-sensitive."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "description": "An opaque lookup reference. The referenced secret is resolved only at the adapter boundary.",
+          "type": "object",
+          "properties": {
+            "key": {
+              "description": "Provider-local opaque key. It must not itself contain the secret.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "secret_ref"
+            },
+            "provider": {
+              "description": "Secret-provider name, such as `environment` or an OS keyring adapter.",
+              "type": "string"
+            },
+            "redacted": {
+              "description": "Safe text rendered in previews and audit exports.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "provider",
+            "key",
+            "redacted"
+          ]
+        }
+      ]
+    },
+    "IntentId": {
+      "description": "Stable identifier for a `IntentId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "OperationSpec": {
+      "description": "Optional inverse or compensation operation declared by an effect.",
+      "type": "object",
+      "properties": {
+        "adapter": {
+          "description": "Adapter name.",
+          "type": "string"
+        },
+        "inputs": {
+          "description": "Secret-safe inputs.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/InputValue"
+          }
+        },
+        "operation": {
+          "description": "Operation name.",
+          "type": "string"
+        },
+        "resource": {
+          "description": "Exact recovery resource.",
+          "$ref": "#/$defs/ResourceScope"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "adapter",
+        "operation",
+        "inputs",
+        "resource"
+      ]
+    },
+    "PlanId": {
+      "description": "Stable identifier for a `PlanId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "Preview": {
+      "description": "Structured effect preview.",
+      "oneOf": [
+        {
+          "description": "Filesystem diff or operation description.",
+          "type": "object",
+          "properties": {
+            "after_sha256": {
+              "description": "Proposed digest, if the path will exist.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "before_sha256": {
+              "description": "Original digest, if the path exists.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "filesystem"
+            },
+            "operation": {
+              "description": "Filesystem operation.",
+              "type": "string"
+            },
+            "path": {
+              "description": "Workspace-relative path.",
+              "type": "string"
+            },
+            "unified_diff": {
+              "description": "Bounded UTF-8 unified diff when content is textual.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "operation",
+            "path"
+          ]
+        },
+        {
+          "description": "Redacted outbound HTTP request.",
+          "type": "object",
+          "properties": {
+            "body_sha256": {
+              "description": "Digest of the outbound body, if present.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "headers": {
+              "description": "Headers with credential values replaced by markers.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "http"
+            },
+            "method": {
+              "description": "Uppercase HTTP method.",
+              "type": "string"
+            },
+            "url": {
+              "description": "Allowlisted URL without user information.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "method",
+            "url",
+            "headers"
+          ]
+        },
+        {
+          "description": "Exact argv without shell interpolation.",
+          "type": "object",
+          "properties": {
+            "args": {
+              "description": "Exact argument vector.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "environment_keys": {
+              "description": "Names, but never values, of passed environment entries.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "executable": {
+              "description": "Exact executable.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "process"
+            },
+            "workdir": {
+              "description": "Exact working directory.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "executable",
+            "args",
+            "workdir",
+            "environment_keys"
+          ]
+        },
+        {
+          "description": "Safe adapter-defined preview.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "custom"
+            },
+            "media_type": {
+              "description": "Versioned media type describing the value.",
+              "type": "string"
+            },
+            "value": {
+              "description": "Secret-safe preview body."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "media_type",
+            "value"
+          ]
+        },
+        {
+          "description": "Planner placeholder. Preflight must replace this before approval.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pending"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "PrincipalId": {
+      "description": "Stable identifier for a `PrincipalId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "ResourceScope": {
+      "description": "An exact or prefix-bounded resource identifier.",
+      "oneOf": [
+        {
+          "description": "A normalized path relative to a named workspace root.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "filesystem"
+            },
+            "path": {
+              "description": "Normalized path relative to the workspace.",
+              "type": "string"
+            },
+            "workspace": {
+              "description": "Configured workspace name.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "workspace",
+            "path"
+          ]
+        },
+        {
+          "description": "Multiple exact paths in one workspace, used by operations such as move.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "filesystem_set"
+            },
+            "paths": {
+              "description": "Ordered, normalized paths relative to the workspace.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "workspace": {
+              "description": "Configured workspace name.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "workspace",
+            "paths"
+          ]
+        },
+        {
+          "description": "An HTTP origin and path prefix.",
+          "type": "object",
+          "properties": {
+            "domain": {
+              "description": "Lowercase DNS name without credentials.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "http"
+            },
+            "path_prefix": {
+              "description": "Normalized absolute path prefix.",
+              "type": "string"
+            },
+            "port": {
+              "description": "Explicit non-default port.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0
+            },
+            "scheme": {
+              "description": "Lowercase `http` or `https` scheme.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "scheme",
+            "domain",
+            "path_prefix"
+          ]
+        },
+        {
+          "description": "An exact executable and normalized working directory.",
+          "type": "object",
+          "properties": {
+            "executable": {
+              "description": "Exact configured executable identifier or canonical path.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "process"
+            },
+            "workdir": {
+              "description": "Normalized configured working directory.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "executable",
+            "workdir"
+          ]
+        },
+        {
+          "description": "Extension namespace for third-party adapters.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "generic"
+            },
+            "namespace": {
+              "description": "Globally unique adapter namespace.",
+              "type": "string"
+            },
+            "resource": {
+              "description": "Adapter-defined normalized resource identifier.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "namespace",
+            "resource"
+          ]
+        }
+      ]
+    },
+    "RetryPolicy": {
+      "description": "Bounded retry configuration.",
+      "type": "object",
+      "properties": {
+        "backoff_ms": {
+          "description": "Base delay used for bounded exponential backoff.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_attempts": {
+          "description": "Includes the initial attempt and must be at least one.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "retryable_errors": {
+          "description": "Stable adapter error codes that may be retried.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_attempts",
+        "backoff_ms",
+        "retryable_errors"
+      ]
+    },
+    "Reversibility": {
+      "description": "The recovery guarantee an adapter can honestly provide.",
+      "oneOf": [
+        {
+          "description": "The adapter can restore the prior state under its documented atomicity boundary.",
+          "type": "string",
+          "const": "reversible"
+        },
+        {
+          "description": "The adapter can attempt a semantic inverse, but restoration is not guaranteed.",
+          "type": "string",
+          "const": "compensatable"
+        },
+        {
+          "description": "No rollback or compensation is claimed.",
+          "type": "string",
+          "const": "irreversible"
+        }
+      ]
+    },
+    "RiskLevel": {
+      "description": "Severity used for policy and UI decisions.",
+      "oneOf": [
+        {
+          "description": "Read-only or readily restored work with narrow scope.",
+          "type": "string",
+          "const": "low"
+        },
+        {
+          "description": "Mutating but bounded work with reliable recovery.",
+          "type": "string",
+          "const": "medium"
+        },
+        {
+          "description": "Broad, externally visible, or best-effort recoverable work.",
+          "type": "string",
+          "const": "high"
+        },
+        {
+          "description": "Irreversible or safety-critical work.",
+          "type": "string",
+          "const": "critical"
+        }
+      ]
+    },
+    "StepId": {
+      "description": "Stable identifier for a `StepId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

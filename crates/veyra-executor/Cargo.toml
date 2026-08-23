@@ -1,0 +1,30 @@
+[package]
+name = "veyra-executor"
+description = "Effect adapter contracts and built-in Veyra executors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+cap-std.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+similar.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+url.workspace = true
+veyra-protocol = { path = "../veyra-protocol" }
+
+[dev-dependencies]
+axum.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

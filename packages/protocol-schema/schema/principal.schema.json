@@ -1,0 +1,59 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Principal",
+  "description": "A human, agent, service, or system component that can request or approve work.",
+  "type": "object",
+  "properties": {
+    "display_name": {
+      "description": "Display-only name.",
+      "type": "string"
+    },
+    "id": {
+      "description": "Stable principal identifier.",
+      "$ref": "#/$defs/PrincipalId"
+    },
+    "kind": {
+      "description": "Principal class used by policy.",
+      "$ref": "#/$defs/PrincipalKind"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "display_name",
+    "kind"
+  ],
+  "$defs": {
+    "PrincipalId": {
+      "description": "Stable identifier for a `PrincipalId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "PrincipalKind": {
+      "description": "Principal classes recognized by the protocol.",
+      "oneOf": [
+        {
+          "description": "A person operating Veyra.",
+          "type": "string",
+          "const": "human"
+        },
+        {
+          "description": "An AI or deterministic planning agent.",
+          "type": "string",
+          "const": "agent"
+        },
+        {
+          "description": "A local or remote service identity.",
+          "type": "string",
+          "const": "service"
+        },
+        {
+          "description": "A trusted kernel component.",
+          "type": "string",
+          "const": "system"
+        }
+      ]
+    }
+  }
+}

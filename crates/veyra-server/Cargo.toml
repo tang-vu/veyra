@@ -1,0 +1,34 @@
+[package]
+name = "veyra-server"
+description = "Versioned local HTTP API for Veyra"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+axum.workspace = true
+chrono.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+veyra-core = { path = "../veyra-core" }
+veyra-executor = { path = "../veyra-executor" }
+veyra-journal = { path = "../veyra-journal" }
+veyra-policy = { path = "../veyra-policy" }
+veyra-protocol = { path = "../veyra-protocol" }
+
+[dev-dependencies]
+reqwest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

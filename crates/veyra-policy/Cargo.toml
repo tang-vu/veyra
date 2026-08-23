@@ -1,0 +1,22 @@
+[package]
+name = "veyra-policy"
+description = "Deny-by-default capability and approval policy for Veyra"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+veyra-protocol = { path = "../veyra-protocol" }
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

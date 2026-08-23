@@ -1,0 +1,31 @@
+[package]
+name = "veyra-core"
+description = "Trusted execution kernel and transaction state machine for Veyra"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+veyra-executor = { path = "../veyra-executor" }
+veyra-journal = { path = "../veyra-journal" }
+veyra-policy = { path = "../veyra-policy" }
+veyra-protocol = { path = "../veyra-protocol" }
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

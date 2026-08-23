@@ -1,0 +1,25 @@
+{
+  "name": "veyra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reversible execution for AI agents.",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "check": "pnpm -r check",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "format": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "desktop:dev": "pnpm --filter @veyra/desktop tauri dev",
+    "desktop:build": "pnpm --filter @veyra/desktop tauri build"
+  },
+  "devDependencies": {
+    "prettier": "3.6.2"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "No privileged Tauri commands; the UI uses the loopback Veyra API.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

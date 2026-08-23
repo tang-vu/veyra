@@ -1,0 +1,32 @@
+[package]
+name = "veyra-cli"
+description = "Inspectable command-line client for Veyra"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "veyra"
+path = "src/main.rs"
+
+[dependencies]
+chrono.workspace = true
+clap.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+url.workspace = true
+veyra-protocol = { path = "../veyra-protocol" }
+veyra-server = { path = "../veyra-server" }
+
+[dev-dependencies]
+assert_cmd = "2.1.1"
+predicates = "3.1.4"
+
+[lints]
+workspace = true

@@ -1,0 +1,207 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Intent",
+  "description": "A user's requested outcome, before an agent proposes effects.",
+  "type": "object",
+  "properties": {
+    "context": {
+      "description": "Non-secret planner context.",
+      "type": "object",
+      "additionalProperties": true,
+      "default": {}
+    },
+    "created_at": {
+      "description": "Creation timestamp.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "id": {
+      "description": "Stable intent identifier.",
+      "$ref": "#/$defs/IntentId"
+    },
+    "principal_id": {
+      "description": "Requesting principal.",
+      "$ref": "#/$defs/PrincipalId"
+    },
+    "requested_resources": {
+      "description": "Maximum resource envelope the planner may propose.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ResourceScope"
+      }
+    },
+    "schema_version": {
+      "description": "Protocol identifier.",
+      "type": "string"
+    },
+    "summary": {
+      "description": "Plain-language requested outcome.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "principal_id",
+    "summary",
+    "requested_resources",
+    "created_at"
+  ],
+  "$defs": {
+    "IntentId": {
+      "description": "Stable identifier for a `IntentId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "PrincipalId": {
+      "description": "Stable identifier for a `PrincipalId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "ResourceScope": {
+      "description": "An exact or prefix-bounded resource identifier.",
+      "oneOf": [
+        {
+          "description": "A normalized path relative to a named workspace root.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "filesystem"
+            },
+            "path": {
+              "description": "Normalized path relative to the workspace.",
+              "type": "string"
+            },
+            "workspace": {
+              "description": "Configured workspace name.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "workspace",
+            "path"
+          ]
+        },
+        {
+          "description": "Multiple exact paths in one workspace, used by operations such as move.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "filesystem_set"
+            },
+            "paths": {
+              "description": "Ordered, normalized paths relative to the workspace.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "workspace": {
+              "description": "Configured workspace name.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "workspace",
+            "paths"
+          ]
+        },
+        {
+          "description": "An HTTP origin and path prefix.",
+          "type": "object",
+          "properties": {
+            "domain": {
+              "description": "Lowercase DNS name without credentials.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "http"
+            },
+            "path_prefix": {
+              "description": "Normalized absolute path prefix.",
+              "type": "string"
+            },
+            "port": {
+              "description": "Explicit non-default port.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0
+            },
+            "scheme": {
+              "description": "Lowercase `http` or `https` scheme.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "scheme",
+            "domain",
+            "path_prefix"
+          ]
+        },
+        {
+          "description": "An exact executable and normalized working directory.",
+          "type": "object",
+          "properties": {
+            "executable": {
+              "description": "Exact configured executable identifier or canonical path.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "process"
+            },
+            "workdir": {
+              "description": "Normalized configured working directory.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "executable",
+            "workdir"
+          ]
+        },
+        {
+          "description": "Extension namespace for third-party adapters.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "generic"
+            },
+            "namespace": {
+              "description": "Globally unique adapter namespace.",
+              "type": "string"
+            },
+            "resource": {
+              "description": "Adapter-defined normalized resource identifier.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "namespace",
+            "resource"
+          ]
+        }
+      ]
+    }
+  }
+}

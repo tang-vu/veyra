@@ -1,0 +1,91 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PolicyDecision",
+  "description": "Result of a deny-by-default policy evaluation.",
+  "type": "object",
+  "properties": {
+    "capability_ids": {
+      "description": "Capabilities sufficient for the decision.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CapabilityId"
+      }
+    },
+    "decided_at": {
+      "description": "Evaluation timestamp.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "effect_digest": {
+      "description": "Canonical effect digest seen by policy.",
+      "type": "string"
+    },
+    "effect_id": {
+      "description": "Effect evaluated.",
+      "$ref": "#/$defs/EffectId"
+    },
+    "id": {
+      "description": "Stable decision identifier.",
+      "$ref": "#/$defs/PolicyDecisionId"
+    },
+    "outcome": {
+      "description": "Outcome.",
+      "$ref": "#/$defs/PolicyOutcome"
+    },
+    "reasons": {
+      "description": "Stable, human-readable reasons.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "effect_id",
+    "outcome",
+    "reasons",
+    "capability_ids",
+    "effect_digest",
+    "decided_at"
+  ],
+  "$defs": {
+    "CapabilityId": {
+      "description": "Stable identifier for a `CapabilityId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "EffectId": {
+      "description": "Stable identifier for a `EffectId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "PolicyDecisionId": {
+      "description": "Stable identifier for a `PolicyDecisionId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "PolicyOutcome": {
+      "description": "Policy outcome before execution.",
+      "oneOf": [
+        {
+          "description": "Live capabilities are sufficient and policy does not require human approval.",
+          "type": "string",
+          "const": "allow"
+        },
+        {
+          "description": "Capabilities are sufficient, but approval is required by risk policy.",
+          "type": "string",
+          "const": "require_approval"
+        },
+        {
+          "description": "Authority or constraints are insufficient.",
+          "type": "string",
+          "const": "deny"
+        }
+      ]
+    }
+  }
+}

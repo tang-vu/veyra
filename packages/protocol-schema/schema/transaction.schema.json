@@ -1,0 +1,191 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Transaction",
+  "description": "Persisted transaction state.",
+  "type": "object",
+  "properties": {
+    "created_at": {
+      "description": "Creation timestamp.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "effect_ids": {
+      "description": "Ordered effect identifiers.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EffectId"
+      }
+    },
+    "id": {
+      "description": "Stable transaction identifier.",
+      "$ref": "#/$defs/TransactionId"
+    },
+    "intent_id": {
+      "description": "Source intent.",
+      "$ref": "#/$defs/IntentId"
+    },
+    "manual_recovery_reason": {
+      "description": "Reason requiring manual intervention, if applicable.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "plan_id": {
+      "description": "Source plan.",
+      "$ref": "#/$defs/PlanId"
+    },
+    "receipt_ids": {
+      "description": "Successful receipts.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ReceiptId"
+      }
+    },
+    "revision": {
+      "description": "Monotonic optimistic-concurrency revision.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "schema_version": {
+      "description": "Protocol identifier.",
+      "type": "string"
+    },
+    "state": {
+      "description": "Current state.",
+      "$ref": "#/$defs/TransactionState"
+    },
+    "updated_at": {
+      "description": "Last transition timestamp.",
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "intent_id",
+    "plan_id",
+    "state",
+    "effect_ids",
+    "receipt_ids",
+    "revision",
+    "created_at",
+    "updated_at"
+  ],
+  "$defs": {
+    "EffectId": {
+      "description": "Stable identifier for a `EffectId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "IntentId": {
+      "description": "Stable identifier for a `IntentId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "PlanId": {
+      "description": "Stable identifier for a `PlanId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "ReceiptId": {
+      "description": "Stable identifier for a `ReceiptId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "TransactionId": {
+      "description": "Stable identifier for a `TransactionId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "TransactionState": {
+      "description": "Explicit transaction states. Transitions are enforced by `veyra-core`.",
+      "oneOf": [
+        {
+          "description": "Intent accepted but no validated plan is bound.",
+          "type": "string",
+          "const": "draft"
+        },
+        {
+          "description": "Validated plan bound.",
+          "type": "string",
+          "const": "planned"
+        },
+        {
+          "description": "Adapter preflight and policy completed.",
+          "type": "string",
+          "const": "preflighted"
+        },
+        {
+          "description": "Waiting for content-addressed approval.",
+          "type": "string",
+          "const": "awaiting_approval"
+        },
+        {
+          "description": "Required approval grants are live.",
+          "type": "string",
+          "const": "approved"
+        },
+        {
+          "description": "Changes prepared without applying external side effects.",
+          "type": "string",
+          "const": "staged"
+        },
+        {
+          "description": "At least one effect may be in flight.",
+          "type": "string",
+          "const": "executing"
+        },
+        {
+          "description": "Declared postconditions are being checked.",
+          "type": "string",
+          "const": "verifying"
+        },
+        {
+          "description": "Every effect completed and every declared postcondition passed.",
+          "type": "string",
+          "const": "committed"
+        },
+        {
+          "description": "Policy or a human denied execution.",
+          "type": "string",
+          "const": "denied"
+        },
+        {
+          "description": "Execution or verification failed.",
+          "type": "string",
+          "const": "failed"
+        },
+        {
+          "description": "Recovery operations are running.",
+          "type": "string",
+          "const": "compensating"
+        },
+        {
+          "description": "All supported effects were restored.",
+          "type": "string",
+          "const": "rolled_back"
+        },
+        {
+          "description": "Some but not all effects were restored or compensated.",
+          "type": "string",
+          "const": "partially_compensated"
+        },
+        {
+          "description": "Cancelled before an unsafe in-flight boundary.",
+          "type": "string",
+          "const": "cancelled"
+        },
+        {
+          "description": "Crash evidence is insufficient for safe automatic recovery.",
+          "type": "string",
+          "const": "manual_recovery"
+        }
+      ]
+    }
+  }
+}

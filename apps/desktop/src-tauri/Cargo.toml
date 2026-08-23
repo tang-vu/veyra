@@ -1,0 +1,20 @@
+[package]
+name = "veyra-desktop"
+description = "Tauri control plane for Veyra"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.5", features = [] }
+tokio.workspace = true
+veyra-server = { path = "../../../crates/veyra-server" }
+
+[lints]
+workspace = true

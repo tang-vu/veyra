@@ -1,0 +1,38 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuditVerification",
+  "description": "Result of verifying the complete persisted journal chain.",
+  "type": "object",
+  "properties": {
+    "events_checked": {
+      "description": "Number of verified events.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "first_invalid_sequence": {
+      "description": "First invalid sequence, when corruption is detected.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "message": {
+      "description": "Human-readable result safe for normal logs.",
+      "type": "string"
+    },
+    "valid": {
+      "description": "True only if every link, sequence, and event hash is valid.",
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "valid",
+    "events_checked",
+    "message"
+  ]
+}

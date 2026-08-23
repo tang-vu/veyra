@@ -1,0 +1,204 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Verification",
+  "description": "Outcome of checking declared postconditions.",
+  "type": "object",
+  "properties": {
+    "checks": {
+      "description": "Individual postcondition results.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/VerificationCheck"
+      }
+    },
+    "effect_id": {
+      "description": "Effect binding.",
+      "$ref": "#/$defs/EffectId"
+    },
+    "id": {
+      "description": "Stable verification identifier.",
+      "$ref": "#/$defs/VerificationId"
+    },
+    "passed": {
+      "description": "True only when every declared check passed.",
+      "type": "boolean"
+    },
+    "transaction_id": {
+      "description": "Transaction binding.",
+      "$ref": "#/$defs/TransactionId"
+    },
+    "verified_at": {
+      "description": "Completion timestamp.",
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "transaction_id",
+    "effect_id",
+    "checks",
+    "passed",
+    "verified_at"
+  ],
+  "$defs": {
+    "Condition": {
+      "description": "A typed condition evaluated before or after execution.",
+      "oneOf": [
+        {
+          "description": "A relative filesystem path must exist or not exist.",
+          "type": "object",
+          "properties": {
+            "expected": {
+              "description": "Required existence state.",
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "file_exists"
+            },
+            "path": {
+              "description": "Workspace-relative normalized path.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path",
+            "expected"
+          ]
+        },
+        {
+          "description": "File contents must have a precise SHA-256 digest.",
+          "type": "object",
+          "properties": {
+            "digest": {
+              "description": "Required lowercase SHA-256 digest.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "file_sha256"
+            },
+            "path": {
+              "description": "Workspace-relative normalized path.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path",
+            "digest"
+          ]
+        },
+        {
+          "description": "An HTTP response status must match.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "http_status"
+            },
+            "status": {
+              "description": "Required HTTP status code.",
+              "type": "integer",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "status"
+          ]
+        },
+        {
+          "description": "Adapter output must have the declared digest.",
+          "type": "object",
+          "properties": {
+            "digest": {
+              "description": "Required lowercase SHA-256 digest.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "output_sha256"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "digest"
+          ]
+        },
+        {
+          "description": "Versioned third-party condition.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "custom"
+            },
+            "name": {
+              "description": "Versioned condition name.",
+              "type": "string"
+            },
+            "parameters": {
+              "description": "Secret-safe condition parameters."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name",
+            "parameters"
+          ]
+        }
+      ]
+    },
+    "EffectId": {
+      "description": "Stable identifier for a `EffectId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "TransactionId": {
+      "description": "Stable identifier for a `TransactionId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "VerificationCheck": {
+      "description": "Result for one postcondition.",
+      "type": "object",
+      "properties": {
+        "condition": {
+          "description": "Condition that was checked.",
+          "$ref": "#/$defs/Condition"
+        },
+        "message": {
+          "description": "Redacted observation or failure explanation.",
+          "type": "string"
+        },
+        "passed": {
+          "description": "Whether it passed.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "condition",
+        "passed",
+        "message"
+      ]
+    },
+    "VerificationId": {
+      "description": "Stable identifier for a `VerificationId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

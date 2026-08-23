@@ -1,0 +1,76 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApprovalGrant",
+  "description": "An approver's time-bounded grant for an exact approval challenge.",
+  "type": "object",
+  "properties": {
+    "approver_id": {
+      "description": "Approving principal.",
+      "$ref": "#/$defs/PrincipalId"
+    },
+    "effect_digest": {
+      "description": "Effect digest copied from the challenge.",
+      "type": "string"
+    },
+    "expires_at": {
+      "description": "Grant expiry.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "granted_at": {
+      "description": "Creation timestamp.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "id": {
+      "description": "Stable grant identifier.",
+      "$ref": "#/$defs/ApprovalGrantId"
+    },
+    "nonce": {
+      "description": "Challenge nonce copied exactly.",
+      "type": "string"
+    },
+    "request_id": {
+      "description": "Challenge being answered.",
+      "$ref": "#/$defs/ApprovalRequestId"
+    },
+    "transaction_id": {
+      "description": "Transaction binding copied from the challenge.",
+      "$ref": "#/$defs/TransactionId"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "request_id",
+    "transaction_id",
+    "approver_id",
+    "effect_digest",
+    "nonce",
+    "granted_at",
+    "expires_at"
+  ],
+  "$defs": {
+    "ApprovalGrantId": {
+      "description": "Stable identifier for a `ApprovalGrantId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "ApprovalRequestId": {
+      "description": "Stable identifier for a `ApprovalRequestId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "PrincipalId": {
+      "description": "Stable identifier for a `PrincipalId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "TransactionId": {
+      "description": "Stable identifier for a `TransactionId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

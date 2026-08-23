@@ -1,0 +1,78 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Execution",
+  "description": "A single adapter execution attempt.",
+  "type": "object",
+  "properties": {
+    "attempt": {
+      "description": "One-based attempt number.",
+      "type": "integer",
+      "format": "uint8",
+      "maximum": 255,
+      "minimum": 0
+    },
+    "completed_at": {
+      "description": "Completion timestamp, absent while in flight.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "effect_digest": {
+      "description": "Immutable effect digest at execution time.",
+      "type": "string"
+    },
+    "effect_id": {
+      "description": "Effect binding.",
+      "$ref": "#/$defs/EffectId"
+    },
+    "id": {
+      "description": "Stable execution identifier.",
+      "$ref": "#/$defs/ExecutionId"
+    },
+    "outcome": {
+      "description": "Stable adapter outcome code when complete.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "started_at": {
+      "description": "Start timestamp.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "transaction_id": {
+      "description": "Transaction binding.",
+      "$ref": "#/$defs/TransactionId"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "transaction_id",
+    "effect_id",
+    "effect_digest",
+    "attempt",
+    "started_at"
+  ],
+  "$defs": {
+    "EffectId": {
+      "description": "Stable identifier for a `EffectId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "ExecutionId": {
+      "description": "Stable identifier for a `ExecutionId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "TransactionId": {
+      "description": "Stable identifier for a `TransactionId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

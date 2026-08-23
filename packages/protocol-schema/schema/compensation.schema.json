@@ -1,0 +1,84 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Compensation",
+  "description": "A rollback or best-effort compensation attempt.",
+  "type": "object",
+  "properties": {
+    "completed_at": {
+      "description": "Completion timestamp.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "details": {
+      "description": "Redacted adapter evidence."
+    },
+    "effect_id": {
+      "description": "Original effect.",
+      "$ref": "#/$defs/EffectId"
+    },
+    "id": {
+      "description": "Stable compensation identifier.",
+      "$ref": "#/$defs/CompensationId"
+    },
+    "restored": {
+      "description": "Whether prior state was restored to the adapter's verified boundary.",
+      "type": "boolean"
+    },
+    "reversibility": {
+      "description": "Recovery class actually attempted.",
+      "$ref": "#/$defs/Reversibility"
+    },
+    "transaction_id": {
+      "description": "Transaction binding.",
+      "$ref": "#/$defs/TransactionId"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "transaction_id",
+    "effect_id",
+    "reversibility",
+    "restored",
+    "details",
+    "completed_at"
+  ],
+  "$defs": {
+    "CompensationId": {
+      "description": "Stable identifier for a `CompensationId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "EffectId": {
+      "description": "Stable identifier for a `EffectId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "Reversibility": {
+      "description": "The recovery guarantee an adapter can honestly provide.",
+      "oneOf": [
+        {
+          "description": "The adapter can restore the prior state under its documented atomicity boundary.",
+          "type": "string",
+          "const": "reversible"
+        },
+        {
+          "description": "The adapter can attempt a semantic inverse, but restoration is not guaranteed.",
+          "type": "string",
+          "const": "compensatable"
+        },
+        {
+          "description": "No rollback or compensation is claimed.",
+          "type": "string",
+          "const": "irreversible"
+        }
+      ]
+    },
+    "TransactionId": {
+      "description": "Stable identifier for a `TransactionId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

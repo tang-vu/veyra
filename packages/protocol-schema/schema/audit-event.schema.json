@@ -1,0 +1,79 @@
+{
+  "x-veyra-protocol": "veyra.protocol/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuditEvent",
+  "description": "One immutable event in the hash-chained append-only journal.",
+  "type": "object",
+  "properties": {
+    "causal_parent": {
+      "description": "Safe causal link to the effect or prior event that caused this event.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "event_type": {
+      "description": "Stable event kind.",
+      "type": "string"
+    },
+    "hash": {
+      "description": "SHA-256 over all event fields and the previous hash.",
+      "type": "string"
+    },
+    "id": {
+      "description": "Stable event identifier.",
+      "$ref": "#/$defs/AuditEventId"
+    },
+    "payload": {
+      "description": "Redacted canonical event payload."
+    },
+    "previous_hash": {
+      "description": "Previous event hash, or the fixed genesis hash for sequence one.",
+      "type": "string"
+    },
+    "recorded_at": {
+      "description": "Event timestamp.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "sequence": {
+      "description": "Per-journal, one-based monotonic sequence.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "transaction_id": {
+      "description": "Transaction binding, absent only for journal-wide maintenance events.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TransactionId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "sequence",
+    "event_type",
+    "payload",
+    "previous_hash",
+    "hash",
+    "recorded_at"
+  ],
+  "$defs": {
+    "AuditEventId": {
+      "description": "Stable identifier for a `AuditEventId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "TransactionId": {
+      "description": "Stable identifier for a `TransactionId` domain object.",
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}
