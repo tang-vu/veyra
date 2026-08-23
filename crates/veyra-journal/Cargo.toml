@@ -18,7 +18,7 @@ sha2.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
-veyra-protocol = { path = "../veyra-protocol" }
+veyra-protocol = { version = "0.1.0", path = "../veyra-protocol" }
 
 [dev-dependencies]
 tempfile.workspace = true

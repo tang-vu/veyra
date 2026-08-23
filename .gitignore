@@ -1,6 +1,10 @@
 target/
 node_modules/
 /.veyra/
+/.veyra-data/
+/workspace/
+/demo-state/
+/safe-workspace-run/
 dist/
 .vite/
 *.tsbuildinfo

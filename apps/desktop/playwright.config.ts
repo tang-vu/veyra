@@ -1,5 +1,9 @@
 import { defineConfig } from "@playwright/test";
 
+const browserChannel =
+  process.env.VEYRA_E2E_BROWSER_CHANNEL ??
+  (process.platform === "win32" ? "msedge" : undefined);
+
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "../../test-results/desktop",
@@ -8,7 +12,7 @@ export default defineConfig({
   reporter: "line",
   use: {
     baseURL: process.env.VEYRA_E2E_UI_URL ?? "http://127.0.0.1:1420",
-    channel: "msedge",
+    ...(browserChannel === undefined ? {} : { channel: browserChannel }),
     trace: "retain-on-failure",
   },
 });

@@ -41,7 +41,7 @@ impl Default for PolicyConfig {
 /// Persisted use/revocation facts supplied to policy evaluation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CapabilityStatus {
-    /// Number of prior successful authorizations.
+    /// Number of durably consumed authorization attempts, including fail-closed staging attempts.
     pub uses: u32,
     /// Whether the capability has been explicitly revoked.
     pub revoked: bool,
@@ -84,8 +84,14 @@ impl PolicyEngine {
         if effect.timeout_ms == 0 || effect.timeout_ms > self.config.maximum_timeout_ms {
             reasons.push("effect timeout exceeds kernel policy".to_owned());
         }
-        if effect.retry.max_attempts == 0 {
-            reasons.push("retry policy must allow at least one attempt".to_owned());
+        if effect.retry.max_attempts != 1
+            || effect.retry.backoff_ms != 0
+            || !effect.retry.retryable_errors.is_empty()
+        {
+            reasons.push(
+                "automatic effect retries are disabled; use one attempt and durable idempotency"
+                    .to_owned(),
+            );
         }
         if effect.idempotency_key.trim().is_empty() {
             reasons.push("idempotency key is required".to_owned());
@@ -303,6 +309,12 @@ fn constraints_cover(
     effect: &Effect,
     requested: &BTreeMap<String, String>,
 ) -> bool {
+    const KNOWN_CONSTRAINTS: [&str; 3] = ["max_timeout_ms", "max_risk", "allow_irreversible"];
+    if capability.constraints.iter().any(|(name, value)| {
+        !KNOWN_CONSTRAINTS.contains(&name.as_str()) && requested.get(name) != Some(value)
+    }) {
+        return false;
+    }
     if !requested.iter().all(|(name, value)| {
         capability
             .constraints
@@ -311,13 +323,13 @@ fn constraints_cover(
     }) {
         return false;
     }
-    if let Some(limit) = capability
-        .constraints
-        .get("max_timeout_ms")
-        .and_then(|value| value.parse::<u64>().ok())
-        && effect.timeout_ms > limit
-    {
-        return false;
+    if let Some(value) = capability.constraints.get("max_timeout_ms") {
+        let Ok(limit) = value.parse::<u64>() else {
+            return false;
+        };
+        if effect.timeout_ms > limit {
+            return false;
+        }
     }
     if effect.reversibility == Reversibility::Irreversible
         && capability
@@ -660,6 +672,64 @@ mod tests {
             now,
         );
         assert_eq!(allowed.outcome, PolicyOutcome::RequireApproval);
+    }
+
+    #[test]
+    fn unsupported_retries_and_unenforceable_constraints_are_denied() {
+        let now = Utc::now();
+        let tx = TransactionId::new();
+        let engine = PolicyEngine::new(PolicyConfig::default());
+        let mut candidate = effect();
+        let mut grant = capability(&candidate, tx, now);
+
+        candidate.retry.max_attempts = 2;
+        assert_eq!(
+            engine
+                .evaluate(
+                    &candidate,
+                    tx,
+                    candidate.causal_parent.intent_id,
+                    &[grant.clone()],
+                    &HashMap::new(),
+                    now,
+                )
+                .outcome,
+            PolicyOutcome::Deny
+        );
+
+        candidate.retry.max_attempts = 1;
+        grant.constraints.insert("region".into(), "us-east".into());
+        assert_eq!(
+            engine
+                .evaluate(
+                    &candidate,
+                    tx,
+                    candidate.causal_parent.intent_id,
+                    &[grant.clone()],
+                    &HashMap::new(),
+                    now,
+                )
+                .outcome,
+            PolicyOutcome::Deny
+        );
+
+        grant.constraints.remove("region");
+        grant
+            .constraints
+            .insert("max_timeout_ms".into(), "not-a-number".into());
+        assert_eq!(
+            engine
+                .evaluate(
+                    &candidate,
+                    tx,
+                    candidate.causal_parent.intent_id,
+                    &[grant],
+                    &HashMap::new(),
+                    now,
+                )
+                .outcome,
+            PolicyOutcome::Deny
+        );
     }
 
     #[test]

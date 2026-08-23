@@ -1,11 +1,12 @@
 //! Standalone Veyra daemon entry point.
 
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use clap::Parser;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
-use veyra_server::{ApiState, RuntimeConfig, prepare_instance, serve};
+use url::Url;
+use veyra_server::{ApiState, PlannerRuntimeConfig, RuntimeConfig, prepare_instance, serve};
 
 #[derive(Debug, Parser)]
 #[command(name = "veyra-server", version, about = "Local Veyra execution daemon")]
@@ -22,6 +23,15 @@ struct Arguments {
     /// Stable workspace name used in resource scopes.
     #[arg(long, default_value = "default")]
     workspace_name: String,
+    /// Enable an `OpenAI` Responses-compatible planner with this model; absent uses the fixture.
+    #[arg(long)]
+    planner_model: Option<String>,
+    /// Full HTTPS Responses endpoint used with `--planner-model`.
+    #[arg(long, default_value = "https://api.openai.com/v1/responses")]
+    planner_endpoint: Url,
+    /// Environment variable containing the provider key. Its value never enters a plan.
+    #[arg(long, default_value = "OPENAI_API_KEY")]
+    planner_api_key_environment: String,
 }
 
 #[tokio::main]
@@ -41,6 +51,14 @@ async fn main() {
 async fn run(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = RuntimeConfig::new(arguments.data_directory, arguments.workspace);
     config.workspace_name = arguments.workspace_name;
+    if let Some(model) = arguments.planner_model {
+        config.planner = PlannerRuntimeConfig::OpenAiCompatible {
+            endpoint: arguments.planner_endpoint,
+            model,
+            api_key_environment: arguments.planner_api_key_environment,
+            timeout: Duration::from_mins(1),
+        };
+    }
     let instance = prepare_instance(&config)?;
     let listener = TcpListener::bind(arguments.bind).await?;
     let address = listener.local_addr()?;

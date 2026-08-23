@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { VeyraApiError, VeyraClient } from "../src/index.js";
 
+const TOKEN = `vyr_${"a".repeat(64)}`;
+
 describe("VeyraClient", () => {
   it("binds auth to a loopback v1 request and encodes IDs", async () => {
     const fetch = vi
@@ -9,7 +11,7 @@ describe("VeyraClient", () => {
       .mockResolvedValue(Response.json({ id: "tx" }));
     const client = new VeyraClient({
       baseUrl: "http://127.0.0.1:7843/v1",
-      token: "local-secret-token",
+      token: TOKEN,
       fetch,
     });
 
@@ -21,8 +23,10 @@ describe("VeyraClient", () => {
       "http://127.0.0.1:7843/v1/transactions/id%2Fwith%2Fslashes",
     );
     expect(new Headers(init?.headers).get("authorization")).toBe(
-      "Bearer local-secret-token",
+      `Bearer ${TOKEN}`,
     );
+    expect(init?.redirect).toBe("error");
+    expect(init?.credentials).toBe("omit");
   });
 
   it("returns safe typed API errors without retaining the raw response", async () => {
@@ -39,7 +43,7 @@ describe("VeyraClient", () => {
     );
     const client = new VeyraClient({
       baseUrl: "http://localhost:7843/v1/",
-      token: "token",
+      token: TOKEN,
       fetch,
     });
 
@@ -57,8 +61,29 @@ describe("VeyraClient", () => {
   it("rejects non-loopback authority endpoints", () => {
     expect(
       () =>
-        new VeyraClient({ baseUrl: "https://example.com/v1/", token: "token" }),
+        new VeyraClient({ baseUrl: "https://example.com/v1/", token: TOKEN }),
     ).toThrow(/loopback/);
+    expect(
+      () =>
+        new VeyraClient({
+          baseUrl: "http://operator:secret@127.0.0.1:7843/v1/",
+          token: TOKEN,
+        }),
+    ).toThrow(/without credentials/);
+  });
+
+  it("bounds response bodies before JSON decoding", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(Response.json({ value: "too large" }));
+    const client = new VeyraClient({
+      baseUrl: "http://127.0.0.1:7843/v1/",
+      token: TOKEN,
+      fetch,
+      maximumResponseBytes: 4,
+    });
+
+    await expect(client.health()).rejects.toThrow(/response exceeds/);
   });
 
   it("sends an empty demo body without introducing unknown fields", async () => {
@@ -67,7 +92,7 @@ describe("VeyraClient", () => {
       .mockResolvedValue(Response.json({}));
     const client = new VeyraClient({
       baseUrl: "http://[::1]:7843/v1/",
-      token: "token",
+      token: TOKEN,
       fetch,
     });
 
@@ -76,5 +101,15 @@ describe("VeyraClient", () => {
     const [, init] = fetch.mock.calls[0]!;
     expect(init?.method).toBe("POST");
     expect(init?.body).toBe("{}");
+  });
+
+  it("rejects malformed administrative bearer material", () => {
+    expect(
+      () =>
+        new VeyraClient({
+          baseUrl: "http://127.0.0.1:7843/v1/",
+          token: "short",
+        }),
+    ).toThrow(/malformed/);
   });
 });

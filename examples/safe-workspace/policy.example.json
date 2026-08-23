@@ -1,0 +1,30 @@
+{
+  "description": "Issue one capability only after submission supplies the real transaction ID.",
+  "issuer_requirement": "registered human principal",
+  "capability": {
+    "principal_id": "5b74e655-11f4-4a06-86f5-4923551394b8",
+    "intent_id": "ebc832ed-99f8-49f9-8c28-90360fcdf5c5",
+    "transaction_id": "<submission.transaction.id>",
+    "adapter": "filesystem",
+    "operations": ["create"],
+    "resources": [
+      {
+        "kind": "filesystem",
+        "workspace": "default",
+        "path": "demo/hello.txt"
+      }
+    ],
+    "constraints": {
+      "max_timeout_ms": "5000",
+      "max_risk": "medium"
+    },
+    "validity": "ten minutes beginning immediately before issue",
+    "nonce": "fresh cryptographically unique value",
+    "max_uses": 1
+  },
+  "approval": {
+    "required": true,
+    "binding": "transaction + effect digest + challenge nonce + human approver",
+    "expires": "ten minutes after preview"
+  }
+}

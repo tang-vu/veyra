@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 async-trait.workspace = true
 chrono.workspace = true
+futures-util.workspace = true
 reqwest.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -18,10 +19,10 @@ sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-veyra-executor = { path = "../veyra-executor" }
-veyra-journal = { path = "../veyra-journal" }
-veyra-policy = { path = "../veyra-policy" }
-veyra-protocol = { path = "../veyra-protocol" }
+veyra-executor = { version = "0.1.0", path = "../veyra-executor" }
+veyra-journal = { version = "0.1.0", path = "../veyra-journal" }
+veyra-policy = { version = "0.1.0", path = "../veyra-policy" }
+veyra-protocol = { version = "0.1.0", path = "../veyra-protocol" }
 
 [dev-dependencies]
 proptest.workspace = true

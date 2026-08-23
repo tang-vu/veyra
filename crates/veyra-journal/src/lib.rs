@@ -27,6 +27,8 @@ use veyra_protocol::{
 
 const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 const DATABASE_SCHEMA_VERSION: &str = "1";
+const AUDIT_COUNT_KEY: &str = "audit_event_count";
+const AUDIT_HEAD_KEY: &str = "audit_head_hash";
 const DATABASE_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS metadata (
     key TEXT PRIMARY KEY,
@@ -212,13 +214,17 @@ impl Journal {
     /// # Errors
     ///
     /// Returns [`JournalError::NotFound`] when absent, or a database/serialization error.
-    pub fn get_object<T: DeserializeOwned>(&self, kind: &str, id: &str) -> Result<T, JournalError> {
+    pub fn get_object<T: DeserializeOwned + Serialize>(
+        &self,
+        kind: &str,
+        id: &str,
+    ) -> Result<T, JournalError> {
         let connection = self.lock()?;
-        let serialized: String = connection
+        let (serialized, digest): (String, String) = connection
             .query_row(
-                "SELECT canonical_json FROM objects WHERE kind = ?1 AND id = ?2",
+                "SELECT canonical_json, digest FROM objects WHERE kind = ?1 AND id = ?2",
                 params![kind, id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .map_err(JournalError::Database)?
@@ -226,7 +232,7 @@ impl Journal {
                 kind: kind.to_owned(),
                 id: id.to_owned(),
             })?;
-        serde_json::from_str(&serialized).map_err(JournalError::Serialization)
+        deserialize_verified_object(kind, id, &serialized, &digest)
     }
 
     /// List all immutable objects of one kind in creation order.
@@ -234,17 +240,28 @@ impl Journal {
     /// # Errors
     ///
     /// Returns a database or serialization error.
-    pub fn objects<T: DeserializeOwned>(&self, kind: &str) -> Result<Vec<T>, JournalError> {
+    pub fn objects<T: DeserializeOwned + Serialize>(
+        &self,
+        kind: &str,
+    ) -> Result<Vec<T>, JournalError> {
         let connection = self.lock()?;
         let mut statement = connection
-            .prepare("SELECT canonical_json FROM objects WHERE kind = ?1 ORDER BY created_at, id")
+            .prepare(
+                "SELECT id, canonical_json, digest FROM objects WHERE kind = ?1 ORDER BY created_at, id",
+            )
             .map_err(JournalError::Database)?;
         let rows = statement
-            .query_map(params![kind], |row| row.get::<_, String>(0))
+            .query_map(params![kind], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
             .map_err(JournalError::Database)?;
         rows.map(|row| {
-            let serialized = row.map_err(JournalError::Database)?;
-            serde_json::from_str(&serialized).map_err(JournalError::Serialization)
+            let (id, serialized, digest) = row.map_err(JournalError::Database)?;
+            deserialize_verified_object(kind, &id, &serialized, &digest)
         })
         .collect()
     }
@@ -354,14 +371,21 @@ impl Journal {
     pub fn transactions(&self) -> Result<Vec<Transaction>, JournalError> {
         let connection = self.lock()?;
         let mut statement = connection
-            .prepare("SELECT json FROM transactions ORDER BY updated_at DESC")
+            .prepare("SELECT id, revision, state, json FROM transactions ORDER BY updated_at DESC")
             .map_err(JournalError::Database)?;
         let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
             .map_err(JournalError::Database)?;
         rows.map(|row| {
-            let serialized = row.map_err(JournalError::Database)?;
-            serde_json::from_str(&serialized).map_err(JournalError::Serialization)
+            let (id, revision, state, serialized) = row.map_err(JournalError::Database)?;
+            deserialize_transaction_snapshot(&id, revision, &state, &serialized)
         })
         .collect()
     }
@@ -399,7 +423,8 @@ impl Journal {
     pub fn verify_chain(&self) -> Result<AuditVerification, JournalError> {
         let connection = self.lock()?;
         let events = read_events(&connection, None)?;
-        Ok(verify_events(&events))
+        let (expected_count, expected_head) = audit_anchor(&connection)?;
+        Ok(verify_events(&events, expected_count, &expected_head))
     }
 
     /// Export all events as typed JSON-ready values.
@@ -825,26 +850,28 @@ impl Journal {
     pub fn recovery_actions(&self) -> Result<Vec<RecoveryRecord>, JournalError> {
         self.transactions()?
             .into_iter()
-            .filter(|transaction| !transaction.state.is_terminal())
+            .filter(|transaction| {
+                !transaction.state.is_terminal()
+                    || transaction.state == TransactionState::ManualRecovery
+            })
             .map(|transaction| {
                 let action = match transaction.state {
                     TransactionState::Draft
                     | TransactionState::Planned
                     | TransactionState::Preflighted
                     | TransactionState::AwaitingApproval
-                    | TransactionState::Approved
-                    | TransactionState::Staged => RecoveryAction::ResumeSafe,
-                    TransactionState::Verifying => RecoveryAction::ResumeVerification,
-                    TransactionState::Executing | TransactionState::Compensating => {
-                        RecoveryAction::ManualRecovery
-                    }
+                    | TransactionState::Approved => RecoveryAction::ResumeSafe,
+                    TransactionState::Staged
+                    | TransactionState::Executing
+                    | TransactionState::Verifying
+                    | TransactionState::Compensating
+                    | TransactionState::ManualRecovery => RecoveryAction::ManualRecovery,
                     TransactionState::Committed
                     | TransactionState::Denied
                     | TransactionState::Failed
                     | TransactionState::RolledBack
                     | TransactionState::PartiallyCompensated
-                    | TransactionState::Cancelled
-                    | TransactionState::ManualRecovery => {
+                    | TransactionState::Cancelled => {
                         return Err(JournalError::Invariant(
                             "terminal transaction passed recovery filter".into(),
                         ));
@@ -894,8 +921,6 @@ pub enum IdempotencyReservation {
 pub enum RecoveryAction {
     /// No external effect may be in flight; forward processing may resume.
     ResumeSafe,
-    /// Execution has authenticated evidence and postconditions should be checked.
-    ResumeVerification,
     /// Automatic execution could duplicate or worsen an ambiguous effect.
     ManualRecovery,
 }
@@ -1025,6 +1050,27 @@ fn initialize(connection: &Connection, durable: bool) -> Result<(), JournalError
             )));
         }
     }
+    let latest: Option<(i64, String)> = connection
+        .query_row(
+            "SELECT sequence, hash FROM audit_events ORDER BY sequence DESC LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(JournalError::Database)?;
+    let (count, head) = latest.map_or((0_i64, GENESIS_HASH.to_owned()), |value| value);
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO metadata(key, value) VALUES (?1, ?2)",
+            params![AUDIT_COUNT_KEY, count.to_string()],
+        )
+        .map_err(JournalError::Database)?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO metadata(key, value) VALUES (?1, ?2)",
+            params![AUDIT_HEAD_KEY, head],
+        )
+        .map_err(JournalError::Database)?;
     Ok(())
 }
 
@@ -1038,6 +1084,7 @@ fn load_or_create_key(path: &Path) -> Result<[u8; 32], JournalError> {
     }
     match OpenOptions::new().read(true).open(path) {
         Ok(mut file) => {
+            validate_private_key_file(path)?;
             let mut key = [0_u8; 32];
             file.read_exact(&mut key)
                 .map_err(|source| JournalError::Io {
@@ -1098,6 +1145,29 @@ fn load_or_create_key(path: &Path) -> Result<[u8; 32], JournalError> {
     }
 }
 
+fn validate_private_key_file(path: &Path) -> Result<(), JournalError> {
+    let metadata = fs::symlink_metadata(path).map_err(|source| JournalError::Io {
+        operation: "inspect receipt key",
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(JournalError::Invariant(
+            "receipt key must be a regular, non-symlink file".into(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(JournalError::Invariant(
+                "receipt key permissions must deny group and other access".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn append_event_in_transaction(
     sql: &SqlTransaction<'_>,
     transaction_id: Option<TransactionId>,
@@ -1113,6 +1183,21 @@ fn append_event_in_transaction(
         )
         .optional()
         .map_err(JournalError::Database)?;
+    let (anchored_count, anchored_head) = audit_anchor(sql)?;
+    let latest_matches_anchor = match &latest {
+        Some((sequence, hash)) => {
+            u64::try_from(*sequence).ok() == Some(anchored_count) && hash == &anchored_head
+        }
+        None => anchored_count == 0 && anchored_head == GENESIS_HASH,
+    };
+    if !latest_matches_anchor {
+        return Err(JournalError::Corrupt {
+            sequence: latest
+                .as_ref()
+                .and_then(|(sequence, _)| u64::try_from(*sequence).ok()),
+            reason: "audit tail disagrees with its local anchor".into(),
+        });
+    }
     let (sequence, previous_hash) = match latest {
         Some((sequence, hash)) => (
             u64::try_from(sequence)
@@ -1160,6 +1245,16 @@ fn append_event_in_transaction(
             event.hash,
             event.recorded_at.to_rfc3339()
         ],
+    )
+    .map_err(JournalError::Database)?;
+    sql.execute(
+        "UPDATE metadata SET value = ?1 WHERE key = ?2",
+        params![event.sequence.to_string(), AUDIT_COUNT_KEY],
+    )
+    .map_err(JournalError::Database)?;
+    sql.execute(
+        "UPDATE metadata SET value = ?1 WHERE key = ?2",
+        params![event.hash, AUDIT_HEAD_KEY],
     )
     .map_err(JournalError::Database)?;
     Ok(event)
@@ -1241,7 +1336,33 @@ fn read_events(
     Ok(events)
 }
 
-fn verify_events(events: &[AuditEvent]) -> AuditVerification {
+fn audit_anchor(connection: &Connection) -> Result<(u64, String), JournalError> {
+    let count: String = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = ?1",
+            params![AUDIT_COUNT_KEY],
+            |row| row.get(0),
+        )
+        .map_err(JournalError::Database)?;
+    let head: String = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = ?1",
+            params![AUDIT_HEAD_KEY],
+            |row| row.get(0),
+        )
+        .map_err(JournalError::Database)?;
+    let count = count.parse::<u64>().map_err(|_| JournalError::Corrupt {
+        sequence: None,
+        reason: "audit event-count anchor is malformed".into(),
+    })?;
+    Ok((count, head))
+}
+
+fn verify_events(
+    events: &[AuditEvent],
+    expected_count: u64,
+    expected_head: &str,
+) -> AuditVerification {
     let mut previous = GENESIS_HASH.to_owned();
     for (index, event) in events.iter().enumerate() {
         let expected_sequence = u64::try_from(index).unwrap_or(u64::MAX) + 1;
@@ -1273,9 +1394,18 @@ fn verify_events(events: &[AuditEvent]) -> AuditVerification {
         }
         previous.clone_from(&event.hash);
     }
+    let observed_count = u64::try_from(events.len()).unwrap_or(u64::MAX);
+    if observed_count != expected_count || previous != expected_head {
+        return AuditVerification {
+            valid: false,
+            events_checked: observed_count,
+            first_invalid_sequence: observed_count.checked_add(1),
+            message: "journal tail disagrees with its local count/hash anchor".into(),
+        };
+    }
     AuditVerification {
         valid: true,
-        events_checked: u64::try_from(events.len()).unwrap_or(u64::MAX),
+        events_checked: observed_count,
         first_invalid_sequence: None,
         message: "journal hash chain is valid".into(),
     }
@@ -1285,11 +1415,11 @@ fn transaction_from_connection(
     connection: &Connection,
     id: TransactionId,
 ) -> Result<Transaction, JournalError> {
-    let serialized: String = connection
+    let (stored_id, revision, state, serialized): (String, i64, String, String) = connection
         .query_row(
-            "SELECT json FROM transactions WHERE id = ?1",
+            "SELECT id, revision, state, json FROM transactions WHERE id = ?1",
             params![id.to_string()],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()
         .map_err(JournalError::Database)?
@@ -1297,7 +1427,46 @@ fn transaction_from_connection(
             kind: "transaction".into(),
             id: id.to_string(),
         })?;
-    serde_json::from_str(&serialized).map_err(JournalError::Serialization)
+    deserialize_transaction_snapshot(&stored_id, revision, &state, &serialized)
+}
+
+fn deserialize_transaction_snapshot(
+    stored_id: &str,
+    stored_revision: i64,
+    stored_state: &str,
+    serialized: &str,
+) -> Result<Transaction, JournalError> {
+    let transaction: Transaction =
+        serde_json::from_str(serialized).map_err(JournalError::Serialization)?;
+    let revision = u64::try_from(stored_revision)
+        .map_err(|_| JournalError::Invariant("transaction revision is negative".into()))?;
+    if transaction.id.to_string() != stored_id
+        || transaction.revision != revision
+        || state_name(transaction.state) != stored_state
+    {
+        return Err(JournalError::Corrupt {
+            sequence: None,
+            reason: format!("transaction snapshot `{stored_id}` disagrees with indexed state"),
+        });
+    }
+    Ok(transaction)
+}
+
+fn deserialize_verified_object<T: DeserializeOwned + Serialize>(
+    kind: &str,
+    id: &str,
+    serialized: &str,
+    expected_digest: &str,
+) -> Result<T, JournalError> {
+    let value: T = serde_json::from_str(serialized).map_err(JournalError::Serialization)?;
+    let actual = canonical_digest(&value).map_err(JournalError::Canonical)?;
+    if actual != expected_digest {
+        return Err(JournalError::Corrupt {
+            sequence: None,
+            reason: format!("immutable {kind} object `{id}` has a digest mismatch"),
+        });
+    }
+    Ok(value)
 }
 
 fn state_name(state: TransactionState) -> &'static str {
@@ -1340,36 +1509,42 @@ pub fn redact_value(mut value: Value) -> Value {
 }
 
 fn redact_in_place(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            for (key, child) in map {
-                let normalized = key.to_ascii_lowercase().replace('-', "_");
-                if [
-                    "authorization",
-                    "proxy_authorization",
-                    "cookie",
-                    "set_cookie",
-                    "password",
-                    "passwd",
-                    "secret",
-                    "token",
-                    "api_key",
-                    "access_key",
-                    "private_key",
-                ]
-                .iter()
-                .any(|sensitive| {
-                    normalized == *sensitive || normalized.ends_with(&format!("_{sensitive}"))
-                }) {
-                    *child = Value::String("[REDACTED]".into());
-                } else {
-                    redact_in_place(child);
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            Value::Object(map) => {
+                for (key, child) in map {
+                    if is_sensitive_field_name(key) {
+                        *child = Value::String("[REDACTED]".into());
+                    } else {
+                        stack.push(child);
+                    }
                 }
             }
+            Value::Array(values) => stack.extend(values),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
         }
-        Value::Array(values) => values.iter_mut().for_each(redact_in_place),
-        _ => {}
     }
+}
+
+fn is_sensitive_field_name(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase().replace(['-', '.'], "_");
+    let compact = normalized.replace('_', "");
+    [
+        "authorization",
+        "bearer",
+        "cookie",
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "credential",
+    ]
+    .iter()
+    .any(|sensitive| normalized.contains(sensitive))
+        || ["apikey", "accesskey", "privatekey"]
+            .iter()
+            .any(|sensitive| compact.ends_with(sensitive))
 }
 
 fn encode_hex(bytes: &[u8]) -> String {
@@ -1383,7 +1558,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return None;
     }
     value
@@ -1476,6 +1651,80 @@ mod tests {
     }
 
     #[test]
+    fn local_head_anchor_detects_deleted_tail_events() {
+        let journal = journal();
+        journal
+            .append_event(None, "first", None, json!({"safe": true}))
+            .unwrap();
+        journal
+            .append_event(None, "second", None, json!({"safe": true}))
+            .unwrap();
+        {
+            let connection = journal.lock().unwrap();
+            connection
+                .execute("DELETE FROM audit_events WHERE sequence = 2", [])
+                .unwrap();
+        }
+        let verification = journal.verify_chain().unwrap();
+        assert!(!verification.valid);
+        assert_eq!(verification.first_invalid_sequence, Some(2));
+        assert!(matches!(
+            journal.append_event(None, "third", None, json!({})),
+            Err(JournalError::Corrupt { .. })
+        ));
+    }
+
+    #[test]
+    fn immutable_object_digest_is_checked_when_loaded() {
+        let journal = journal();
+        let principal = veyra_protocol::Principal {
+            id: PrincipalId::new(),
+            display_name: "Original".into(),
+            kind: veyra_protocol::PrincipalKind::Human,
+        };
+        journal
+            .put_object("principal", &principal.id.to_string(), &principal)
+            .unwrap();
+        {
+            let connection = journal.lock().unwrap();
+            connection
+                .execute(
+                    "UPDATE objects SET canonical_json = json_set(canonical_json, '$.display_name', 'Tampered') WHERE kind = 'principal' AND id = ?1",
+                    params![principal.id.to_string()],
+                )
+                .unwrap();
+        }
+        assert!(matches!(
+            journal.get_object::<veyra_protocol::Principal>("principal", &principal.id.to_string()),
+            Err(JournalError::Corrupt { .. })
+        ));
+    }
+
+    #[test]
+    fn transaction_snapshot_must_match_its_indexed_state() {
+        let journal = journal();
+        let snapshot = transaction(TransactionState::Draft);
+        journal.create_transaction(&snapshot).unwrap();
+        {
+            let connection = journal.lock().unwrap();
+            connection
+                .execute(
+                    "UPDATE transactions SET state = 'committed' WHERE id = ?1",
+                    params![snapshot.id.to_string()],
+                )
+                .unwrap();
+        }
+        assert!(matches!(
+            journal.transaction(snapshot.id),
+            Err(JournalError::Corrupt { .. })
+        ));
+        assert!(matches!(
+            journal.transactions(),
+            Err(JournalError::Corrupt { .. })
+        ));
+    }
+
+    #[test]
     fn audit_payloads_redact_nested_secrets() {
         let journal = journal();
         journal
@@ -1485,7 +1734,12 @@ mod tests {
                 None,
                 json!({
                     "authorization": "Bearer raw-secret",
-                    "nested": {"service_token": "raw-secret", "safe": "visible"}
+                    "nested": {
+                        "service_token": "raw-secret",
+                        "clientSecret": "raw-secret",
+                        "service.accessKey": "raw-secret",
+                        "safe": "visible"
+                    }
                 }),
             )
             .unwrap();
@@ -1585,5 +1839,129 @@ mod tests {
         ));
         assert_eq!(journal.export_events(None).unwrap().len(), events_before);
         assert_eq!(journal.transaction(tx.id).unwrap().revision, 1);
+    }
+
+    #[test]
+    fn restart_classification_is_conservative_at_every_recoverable_phase() {
+        let journal = journal();
+        let cases = [
+            (TransactionState::Draft, RecoveryAction::ResumeSafe),
+            (TransactionState::Planned, RecoveryAction::ResumeSafe),
+            (TransactionState::Preflighted, RecoveryAction::ResumeSafe),
+            (
+                TransactionState::AwaitingApproval,
+                RecoveryAction::ResumeSafe,
+            ),
+            (TransactionState::Approved, RecoveryAction::ResumeSafe),
+            (TransactionState::Staged, RecoveryAction::ManualRecovery),
+            (TransactionState::Executing, RecoveryAction::ManualRecovery),
+            (TransactionState::Verifying, RecoveryAction::ManualRecovery),
+            (
+                TransactionState::Compensating,
+                RecoveryAction::ManualRecovery,
+            ),
+            (
+                TransactionState::ManualRecovery,
+                RecoveryAction::ManualRecovery,
+            ),
+        ];
+        let mut expected = std::collections::HashMap::new();
+        for (state, action) in cases {
+            let snapshot = transaction(state);
+            expected.insert(snapshot.id, (state, action));
+            journal.create_transaction(&snapshot).unwrap();
+        }
+        let records = journal.recovery_actions().unwrap();
+        assert_eq!(records.len(), expected.len());
+        for record in records {
+            assert_eq!(
+                (record.state, record.action),
+                expected[&record.transaction_id]
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_idempotency_reservation_has_exactly_one_winner() {
+        use std::sync::{Arc, Barrier};
+
+        let journal = journal();
+        let barrier = Arc::new(Barrier::new(12));
+        let handles = (0..12)
+            .map(|_| {
+                let journal = journal.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    journal
+                        .reserve_execution("filesystem", "concurrent-key", "same-digest")
+                        .unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        let reservations = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reservations
+                .iter()
+                .filter(|item| matches!(item, IdempotencyReservation::Acquired))
+                .count(),
+            1
+        );
+        assert_eq!(
+            reservations
+                .iter()
+                .filter(|item| matches!(item, IdempotencyReservation::InProgress))
+                .count(),
+            11
+        );
+    }
+
+    #[test]
+    fn durable_reopen_preserves_chain_and_marks_in_flight_execution_manual() {
+        let temporary = tempfile::TempDir::new().unwrap();
+        let database = temporary.path().join("journal.sqlite3");
+        let key = temporary.path().join("receipt.key");
+        let snapshot = transaction(TransactionState::Executing);
+        {
+            let journal = Journal::open(&database, &key).unwrap();
+            journal.create_transaction(&snapshot).unwrap();
+            journal
+                .append_event(
+                    Some(snapshot.id),
+                    "failure_injection.process_exit",
+                    None,
+                    json!({"phase": "executing"}),
+                )
+                .unwrap();
+        }
+        let reopened = Journal::open(&database, &key).unwrap();
+        assert!(reopened.verify_chain().unwrap().valid);
+        assert_eq!(
+            reopened.recovery_actions().unwrap(),
+            vec![RecoveryRecord {
+                transaction_id: snapshot.id,
+                state: TransactionState::Executing,
+                action: RecoveryAction::ManualRecovery,
+            }]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_receipt_key_must_be_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temporary = tempfile::TempDir::new().unwrap();
+        let database = temporary.path().join("journal.sqlite3");
+        let key = temporary.path().join("receipt.key");
+        fs::write(&key, [7_u8; 32]).unwrap();
+        fs::set_permissions(&key, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(matches!(
+            Journal::open(database, key),
+            Err(JournalError::Invariant(_))
+        ));
     }
 }

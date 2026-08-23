@@ -15,7 +15,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.96"
 license = "Apache-2.0"
 repository = "https://github.com/veyra-project/veyra"
 authors = ["Veyra contributors"]
@@ -24,6 +24,7 @@ authors = ["Veyra contributors"]
 async-trait = "0.1.92"
 axum = "0.8.9"
 bytes = "1.11.1"
+cap-fs-ext = "4.0.3"
 cap-std = "4.0.2"
 chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4.6.6", features = ["derive", "env"] }
@@ -50,6 +51,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 url = { version = "2.5.8", features = ["serde"] }
 uuid = { version = "1.25.0", features = ["v4", "serde"] }
+zeroize = "1.9.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

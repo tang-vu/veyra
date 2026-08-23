@@ -24,8 +24,8 @@ Status legend: `[ ]` pending, `[~]` active, `[x]` verified.
 
 ## Milestone 4 — hardening and release quality
 
-- [ ] Exercise crash boundaries, concurrency/idempotency, malicious adapters, replay, receipt forgery, spoofing, and secret redaction.
-- [ ] Add and run at least 20 machine-readable eval scenarios.
-- [ ] Complete OSS, architecture, protocol, security, adapter, API/CLI, and release documentation.
-- [ ] Inspect desktop UI at multiple viewports and run supported smoke/E2E coverage.
-- [ ] Run the complete verification matrix, review as maintainer/security engineer, fix findings, and produce the final report.
+- [x] Exercise crash boundaries, concurrency/idempotency, malicious adapters, replay, receipt forgery, spoofing, and secret redaction.
+- [x] Add and run at least 20 machine-readable eval scenarios.
+- [x] Complete OSS, architecture, protocol, security, adapter, API/CLI, and release documentation.
+- [x] Inspect desktop UI at multiple viewports and run supported smoke/E2E coverage.
+- [x] Run the complete verification matrix, review as maintainer/security engineer, fix findings, and produce the final report.

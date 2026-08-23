@@ -15,7 +15,7 @@ tauri-build = { version = "2.6.3", features = [] }
 serde.workspace = true
 tauri = { version = "2.11.5", features = [] }
 tokio.workspace = true
-veyra-server = { path = "../../../crates/veyra-server" }
+veyra-server = { version = "0.1.0", path = "../../../crates/veyra-server" }
 
 [lints]
 workspace = true

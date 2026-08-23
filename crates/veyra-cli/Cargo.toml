@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 chrono.workspace = true
 clap.workspace = true
+futures-util.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -21,8 +22,8 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
-veyra-protocol = { path = "../veyra-protocol" }
-veyra-server = { path = "../veyra-server" }
+veyra-protocol = { version = "0.1.0", path = "../veyra-protocol" }
+veyra-server = { version = "0.1.0", path = "../veyra-server" }
 
 [dev-dependencies]
 assert_cmd = "2.1.1"

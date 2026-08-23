@@ -1,0 +1,114 @@
+name: Release artifacts
+
+on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-binaries:
+    name: Core binaries (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+          - name: windows-x86_64
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+
+      - name: Build CLI and daemon
+        run: cargo build --locked --release -p veyra-cli -p veyra-server
+
+      - name: Package Linux binaries
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p dist
+          tar -C target/release -czf dist/veyra-${{ matrix.name }}.tar.gz veyra veyra-server
+          sha256sum dist/veyra-${{ matrix.name }}.tar.gz > dist/veyra-${{ matrix.name }}.tar.gz.sha256
+
+      - name: Package Windows binaries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Compress-Archive -LiteralPath target/release/veyra.exe,target/release/veyra-server.exe -DestinationPath dist/veyra-${{ matrix.name }}.zip
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath dist/veyra-${{ matrix.name }}.zip).Hash.ToLowerInvariant()
+          "$hash  veyra-${{ matrix.name }}.zip" | Set-Content -Encoding ascii dist/veyra-${{ matrix.name }}.zip.sha256
+
+      - name: Upload core artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: veyra-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  desktop-windows:
+    name: Unsigned Windows desktop bundle
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.96.0-x86_64-pc-windows-msvc --profile minimal
+          rustup default 1.96.0-x86_64-pc-windows-msvc
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.20.0
+
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build NSIS bundle
+        run: pnpm desktop:build
+
+      - name: Collect bundle and checksum
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $installer = Get-ChildItem -LiteralPath target/release/bundle/nsis -Filter *.exe | Select-Object -First 1
+          if ($null -eq $installer) { throw "Tauri did not produce an NSIS installer" }
+          Copy-Item -LiteralPath $installer.FullName -Destination dist/
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path dist $installer.Name)).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content -Encoding ascii (Join-Path dist "$($installer.Name).sha256")
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: veyra-desktop-windows-x86_64-unsigned
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

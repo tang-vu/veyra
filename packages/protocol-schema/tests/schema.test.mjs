@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 
 const directory = resolve(import.meta.dirname, "../schema");
+const fixtureDirectory = resolve(import.meta.dirname, "../fixtures");
 
 test("all generated schemas are valid JSON with stable protocol markers", async () => {
   const files = (await readdir(directory)).filter((file) =>
@@ -17,4 +18,22 @@ test("all generated schemas are valid JSON with stable protocol markers", async 
     assert.equal(document["x-veyra-protocol"], "veyra.protocol/v1");
     assert.match(document.$schema, /^https:\/\/json-schema\.org\//);
   }
+});
+
+test("committed compatibility fixtures retain their cross-record bindings", async () => {
+  const principal = JSON.parse(
+    await readFile(resolve(fixtureDirectory, "agent.principal.json"), "utf8"),
+  );
+  const intent = JSON.parse(
+    await readFile(
+      resolve(fixtureDirectory, "filesystem-create.intent.json"),
+      "utf8",
+    ),
+  );
+  assert.equal(intent.schema_version, "veyra.protocol/v1");
+  assert.equal(intent.principal_id, principal.id);
+  assert.deepEqual(intent.requested_resources, [
+    { kind: "filesystem", workspace: "default", path: "demo" },
+  ]);
+  assert.equal(intent.context.path, "demo/hello.txt");
 });

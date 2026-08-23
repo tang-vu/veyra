@@ -24,7 +24,7 @@ impl StateMachine {
                 | (S::Approved, S::Staged | S::Failed | S::Cancelled)
                 | (
                     S::Staged,
-                    S::Executing | S::Compensating | S::Cancelled | S::Failed
+                    S::Executing | S::Compensating | S::Cancelled | S::Failed | S::ManualRecovery
                 )
                 | (
                     S::Executing,

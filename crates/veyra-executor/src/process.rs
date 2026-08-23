@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tokio::{io::AsyncReadExt, process::Command, sync::Mutex, time::timeout};
 use veyra_protocol::{
     Condition, Effect, InputValue, Preview, ResourceScope, Reversibility, VerificationCheck,
@@ -21,7 +22,9 @@ use veyra_protocol::{
 use crate::{
     AdapterContext, AdapterError, AdapterPreflight, AdapterRecovery, AdapterResult, EffectAdapter,
     SecretValue, StagedEffect,
-    util::{public_string_array, sha256},
+    util::{
+        no_unsupported_capability_constraints, public_string_array, redact_secret_text, sha256,
+    },
 };
 
 /// One exact executable, argument-vector, working-directory, and environment allowlist.
@@ -105,6 +108,7 @@ impl ProcessAdapter {
     }
 
     fn spec(&self, effect: &Effect) -> Result<ProcessSpec, AdapterError> {
+        no_unsupported_capability_constraints(effect, &[])?;
         if !self.config.enabled {
             return Err(AdapterError::AdapterDisabled(self.name().into()));
         }
@@ -347,8 +351,8 @@ impl EffectAdapter for ProcessAdapter {
             if let Ok(value) = std::str::from_utf8(secret.expose())
                 && !value.is_empty()
             {
-                stdout = stdout.replace(value, "[REDACTED]");
-                stderr = stderr.replace(value, "[REDACTED]");
+                stdout = redact_secret_text(&stdout, value);
+                stderr = redact_secret_text(&stderr, value);
             }
         }
         drop(secrets);
@@ -593,22 +597,54 @@ fn process_spec_digest(spec: &ProcessSpec) -> Result<String, AdapterError> {
 }
 
 fn hash_file(path: &Path, limit: usize) -> Result<String, AdapterError> {
-    let metadata = std::fs::metadata(path).map_err(AdapterError::Process)?;
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut file = std::fs::File::open(path).map_err(AdapterError::Process)?;
+    let metadata = file.metadata().map_err(AdapterError::Process)?;
     if !metadata.is_file() || metadata.len() > u64::try_from(limit).unwrap_or(u64::MAX) {
         return Err(AdapterError::Policy(
             "process executable is not a bounded regular file".into(),
         ));
     }
-    let mut file = std::fs::File::open(path).map_err(AdapterError::Process)?;
-    let mut content = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(limit));
-    file.read_to_end(&mut content)
-        .map_err(AdapterError::Process)?;
-    Ok(sha256(&content))
+    let mut hasher = Sha256::new();
+    let mut total = 0_usize;
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(AdapterError::Process)?;
+        if read == 0 {
+            break;
+        }
+        total = total.checked_add(read).ok_or(AdapterError::SizeLimit {
+            kind: "process executable",
+            limit,
+        })?;
+        if total > limit {
+            return Err(AdapterError::SizeLimit {
+                kind: "process executable",
+                limit,
+            });
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let digest = hasher.finalize();
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    Ok(encoded)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::BTreeMap, sync::Arc};
+
+    use veyra_protocol::{
+        CapabilityRequirement, CausalParent, EffectId, IntentId, PROTOCOL_VERSION, PlanId,
+        PrincipalId, RetryPolicy, RiskLevel, StepId, TransactionId, public,
+    };
+
     use super::*;
+    use crate::DenySecretResolver;
 
     #[test]
     fn process_is_disabled_by_default_configuration() {
@@ -636,5 +672,77 @@ mod tests {
         assert!(is_common_shell(Path::new("C:/Windows/System32/cmd.exe")));
         assert!(is_common_shell(Path::new("/bin/bash")));
         assert!(!is_common_shell(Path::new("/usr/bin/git")));
+    }
+
+    #[tokio::test]
+    async fn safe_demo_runs_one_exact_argv_without_a_shell() {
+        let executable = std::env::current_exe().unwrap();
+        let workdir = std::env::current_dir().unwrap();
+        let arguments = vec!["--list".into()];
+        let adapter = ProcessAdapter::safe_demo(&executable, arguments.clone(), &workdir).unwrap();
+        let resource = ResourceScope::Process {
+            executable: executable.to_string_lossy().into_owned(),
+            workdir: workdir.to_string_lossy().into_owned(),
+        };
+        let mut effect = Effect {
+            schema_version: PROTOCOL_VERSION.into(),
+            id: EffectId::new(),
+            causal_parent: CausalParent {
+                intent_id: IntentId::new(),
+                plan_id: PlanId::new(),
+                step_id: StepId::new(),
+                effect_id: None,
+            },
+            principal_id: PrincipalId::new(),
+            adapter: "process".into(),
+            operation: "run".into(),
+            inputs: BTreeMap::from([("args".into(), public(json!(arguments)))]),
+            resource: resource.clone(),
+            preconditions: vec![],
+            expected_postconditions: vec![Condition::Custom {
+                name: "veyra.process.exit_code/v1".into(),
+                parameters: json!({"expected": 0}),
+            }],
+            risk: RiskLevel::High,
+            reversibility: Reversibility::Irreversible,
+            preview: Preview::Pending,
+            idempotency_key: "process-safe-demo-test".into(),
+            timeout_ms: 5_000,
+            retry: RetryPolicy {
+                max_attempts: 1,
+                backoff_ms: 0,
+                retryable_errors: vec![],
+            },
+            required_capabilities: vec![CapabilityRequirement {
+                adapter: "process".into(),
+                operation: "run".into(),
+                resource,
+                constraints: BTreeMap::new(),
+            }],
+            inverse: None,
+        };
+        let context = AdapterContext {
+            transaction_id: TransactionId::new(),
+            secrets: Arc::new(DenySecretResolver),
+        };
+        effect.preview = adapter.preflight(&effect, &context).await.unwrap().preview;
+        let staged = adapter.stage(&effect, &context).await.unwrap();
+        let result = adapter.execute(&effect, &staged, &context).await.unwrap();
+        assert_eq!(result.outcome, "exit_0");
+        assert!(
+            adapter
+                .verify(&effect, &staged, &result, &context)
+                .await
+                .unwrap()
+                .iter()
+                .all(|check| check.passed)
+        );
+        assert!(
+            !adapter
+                .rollback(&effect, &staged, &context)
+                .await
+                .unwrap()
+                .restored
+        );
     }
 }

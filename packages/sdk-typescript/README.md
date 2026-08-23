@@ -14,5 +14,7 @@ const veyra = new VeyraClient({
 const transactions = await veyra.listTransactions();
 ```
 
-Treat the token as a local credential. Do not log it, embed it in a web deployment, or send it to a
-non-loopback origin.
+Treat the token as an administrative root credential. Do not give it to a model, log it, embed it in
+a web deployment, or send it to a non-loopback origin. The client rejects URL credentials,
+query/fragment-bearing base URLs and redirects; it also bounds request/response sizes, defaults to a
+60-second timeout, and redacts the token from surfaced errors.

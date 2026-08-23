@@ -23,7 +23,10 @@ use veyra_protocol::{
 use crate::{
     AdapterContext, AdapterError, AdapterPreflight, AdapterRecovery, AdapterResult, EffectAdapter,
     StagedEffect,
-    util::{public_string, public_string_map, sha256},
+    util::{
+        no_unsupported_capability_constraints, public_string, public_string_map,
+        redact_secret_text, sha256,
+    },
 };
 
 /// One explicit HTTP origin, path, and method allowlist.
@@ -50,8 +53,12 @@ pub struct HttpAdapterConfig {
     pub rules: Vec<HttpRule>,
     /// Maximum request body bytes.
     pub maximum_request_bytes: usize,
+    /// Maximum aggregate request-header bytes, including resolved secret values.
+    pub maximum_request_header_bytes: usize,
     /// Maximum response body bytes after transfer decoding.
     pub maximum_response_bytes: usize,
+    /// Maximum aggregate response-header bytes retained by the adapter.
+    pub maximum_response_header_bytes: usize,
     /// Maximum request timeout regardless of effect request.
     pub maximum_timeout_ms: u64,
 }
@@ -70,7 +77,9 @@ impl HttpAdapter {
     /// Returns [`AdapterError`] when limits are zero or a rule is malformed.
     pub fn new(config: HttpAdapterConfig) -> Result<Self, AdapterError> {
         if config.maximum_request_bytes == 0
+            || config.maximum_request_header_bytes == 0
             || config.maximum_response_bytes == 0
+            || config.maximum_response_header_bytes == 0
             || config.maximum_timeout_ms == 0
         {
             return Err(AdapterError::Policy(
@@ -92,6 +101,7 @@ impl HttpAdapter {
     }
 
     fn request_spec(&self, effect: &Effect) -> Result<HttpRequestSpec, AdapterError> {
+        no_unsupported_capability_constraints(effect, &[])?;
         self.validate_shape(effect)?;
         let method = Method::from_bytes(public_string(&effect.inputs, "method")?.as_bytes())
             .map_err(|_| AdapterError::HttpSyntax("method"))?;
@@ -125,6 +135,25 @@ impl HttpAdapter {
             })?;
 
         let (public_headers, secret_headers) = parse_headers(effect)?;
+        let mut request_header_bytes =
+            header_bytes(&public_headers, self.config.maximum_request_header_bytes)?;
+        if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) {
+            HeaderValue::from_str(&effect.idempotency_key)
+                .map_err(|_| AdapterError::HttpSyntax("idempotency key"))?;
+            request_header_bytes = request_header_bytes
+                .checked_add("idempotency-key".len())
+                .and_then(|length| length.checked_add(effect.idempotency_key.len()))
+                .ok_or(AdapterError::SizeLimit {
+                    kind: "HTTP request headers",
+                    limit: self.config.maximum_request_header_bytes,
+                })?;
+        }
+        if request_header_bytes > self.config.maximum_request_header_bytes {
+            return Err(AdapterError::SizeLimit {
+                kind: "HTTP request headers",
+                limit: self.config.maximum_request_header_bytes,
+            });
+        }
         let body = effect
             .inputs
             .get("body")
@@ -205,10 +234,19 @@ impl HttpAdapter {
     }
 
     async fn resolve(&self, spec: &HttpRequestSpec) -> Result<Vec<SocketAddr>, AdapterError> {
-        let addresses: Vec<_> = tokio::net::lookup_host((spec.host.as_str(), spec.port))
+        let resolved = tokio::net::lookup_host((spec.host.as_str(), spec.port))
             .await
-            .map_err(AdapterError::Process)?
-            .collect();
+            .map_err(AdapterError::Resolution)?;
+        let mut addresses = Vec::new();
+        for address in resolved {
+            if addresses.len() == 64 {
+                return Err(AdapterError::SizeLimit {
+                    kind: "HTTP resolved addresses",
+                    limit: 64,
+                });
+            }
+            addresses.push(address);
+        }
         if addresses.is_empty() {
             return Err(AdapterError::Policy(
                 "HTTP destination resolved to no addresses".into(),
@@ -221,7 +259,6 @@ impl HttpAdapter {
                 "HTTP destination resolved to a non-public address".into(),
             ));
         }
-        let mut addresses = addresses;
         addresses.sort();
         addresses.dedup();
         Ok(addresses)
@@ -246,6 +283,48 @@ impl HttpAdapter {
         serde_json::from_value(staged.data.clone()).map_err(AdapterError::Serialization)
     }
 
+    fn attach_headers(
+        &self,
+        mut request: reqwest::RequestBuilder,
+        effect: &Effect,
+        spec: &HttpRequestSpec,
+        context: &AdapterContext,
+    ) -> Result<(reqwest::RequestBuilder, Vec<crate::SecretValue>), AdapterError> {
+        let mut request_header_bytes = header_bytes(
+            &spec.public_headers,
+            self.config.maximum_request_header_bytes,
+        )?;
+        for (name, value) in &spec.public_headers {
+            request = request.header(name, value);
+        }
+        let mut resolved_secrets = Vec::with_capacity(spec.secret_headers.len());
+        for header in &spec.secret_headers {
+            let secret = context.secrets.resolve(&header.provider, &header.key)?;
+            request_header_bytes = checked_header_bytes(
+                request_header_bytes,
+                header.name.len(),
+                secret.expose().len(),
+                self.config.maximum_request_header_bytes,
+            )?;
+            let name = HeaderName::from_str(&header.name)
+                .map_err(|_| AdapterError::HttpSyntax("header name"))?;
+            let value = HeaderValue::from_bytes(secret.expose())
+                .map_err(|_| AdapterError::HttpSyntax("secret header value"))?;
+            request = request.header(name, value);
+            resolved_secrets.push(secret);
+        }
+        if !matches!(spec.method.as_str(), "GET" | "HEAD" | "OPTIONS") {
+            let _ = checked_header_bytes(
+                request_header_bytes,
+                "idempotency-key".len(),
+                effect.idempotency_key.len(),
+                self.config.maximum_request_header_bytes,
+            )?;
+            request = request.header("idempotency-key", &effect.idempotency_key);
+        }
+        Ok((request, resolved_secrets))
+    }
+
     async fn send(
         &self,
         effect: &Effect,
@@ -264,39 +343,32 @@ impl HttpAdapter {
             .resolve_to_addrs(&spec.host, addresses)
             .build()
             .map_err(AdapterError::Network)?;
-        let mut request = client.request(method.clone(), &spec.url);
-        for (name, value) in &spec.public_headers {
-            request = request.header(name, value);
-        }
-        let mut resolved_secrets = Vec::with_capacity(spec.secret_headers.len());
-        for header in &spec.secret_headers {
-            let secret = context.secrets.resolve(&header.provider, &header.key)?;
-            let name = HeaderName::from_str(&header.name)
-                .map_err(|_| AdapterError::HttpSyntax("header name"))?;
-            let value = HeaderValue::from_bytes(secret.expose())
-                .map_err(|_| AdapterError::HttpSyntax("secret header value"))?;
-            request = request.header(name, value);
-            resolved_secrets.push(secret);
-        }
-        if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) {
-            request = request.header("idempotency-key", &effect.idempotency_key);
-        }
+        let (mut request, resolved_secrets) =
+            self.attach_headers(client.request(method, &spec.url), effect, spec, context)?;
         if !spec.body.is_empty() {
             request = request.body(spec.body.clone());
         }
         let response = request.send().await.map_err(AdapterError::Network)?;
         let status = response.status().as_u16();
-        let headers = response
-            .headers()
-            .iter()
-            .filter(|(name, _)| !is_sensitive_header(name.as_str()))
-            .map(|(name, value)| {
-                (
+        let mut header_bytes = 0_usize;
+        let mut headers = BTreeMap::new();
+        for (name, value) in response.headers() {
+            header_bytes = header_bytes
+                .saturating_add(name.as_str().len())
+                .saturating_add(value.as_bytes().len());
+            if header_bytes > self.config.maximum_response_header_bytes {
+                return Err(AdapterError::SizeLimit {
+                    kind: "HTTP response headers",
+                    limit: self.config.maximum_response_header_bytes,
+                });
+            }
+            if !is_sensitive_header(name.as_str()) {
+                headers.insert(
                     name.as_str().to_owned(),
                     value.to_str().unwrap_or("[NON-UTF8]").to_owned(),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
+                );
+            }
+        }
         if response.content_length().is_some_and(|length| {
             length > u64::try_from(self.config.maximum_response_bytes).unwrap_or(u64::MAX)
         }) {
@@ -318,6 +390,10 @@ impl HttpAdapter {
             body.extend_from_slice(&chunk);
         }
         let body_digest = sha256(&body);
+        for secret in &resolved_secrets {
+            redact_secret_text_values(&mut headers, secret.expose());
+        }
+        let body = redact_secret_bytes(body, &resolved_secrets);
         let body_text = String::from_utf8(body).ok();
         drop(resolved_secrets);
         Ok(AdapterResult {
@@ -378,7 +454,9 @@ impl EffectAdapter for HttpAdapter {
             preview,
             observations: json!({
                 "resolved_addresses": addresses.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "request_header_limit_bytes": self.config.maximum_request_header_bytes,
                 "response_limit_bytes": self.config.maximum_response_bytes,
+                "response_header_limit_bytes": self.config.maximum_response_header_bytes,
                 "redirects": "disabled",
                 "automatic_retries": "disabled",
             }),
@@ -439,6 +517,16 @@ impl EffectAdapter for HttpAdapter {
                     .map_err(|_| AdapterError::InvalidStage("invalid pinned address".into()))
             })
             .collect::<Result<Vec<SocketAddr>, _>>()?;
+        if addresses.is_empty()
+            || addresses.len() > 64
+            || addresses.iter().any(|address| address.port() != spec.port)
+            || (!spec.allow_private_network
+                && addresses.iter().any(|address| !is_public_ip(address.ip())))
+        {
+            return Err(AdapterError::InvalidStage(
+                "pinned HTTP addresses violate the approved destination policy".into(),
+            ));
+        }
         self.send(effect, &spec, &addresses, context).await
     }
 
@@ -543,6 +631,7 @@ struct HttpStage {
 fn parse_headers(
     effect: &Effect,
 ) -> Result<(BTreeMap<String, String>, Vec<SecretHeader>), AdapterError> {
+    const MAXIMUM_HEADER_COUNT: usize = 128;
     let public_headers = effect.inputs.get("headers").map_or_else(
         || Ok(BTreeMap::new()),
         |_| public_string_map(&effect.inputs, "headers"),
@@ -568,8 +657,24 @@ fn parse_headers(
             });
         }
     }
+    if public_headers
+        .len()
+        .checked_add(secret_headers.len())
+        .is_none_or(|count| count > MAXIMUM_HEADER_COUNT)
+    {
+        return Err(AdapterError::SizeLimit {
+            kind: "HTTP request header count",
+            limit: MAXIMUM_HEADER_COUNT,
+        });
+    }
+    let mut header_names = BTreeSet::new();
     for (name, value) in &public_headers {
         validate_header_name(name)?;
+        if !header_names.insert(name.to_ascii_lowercase()) {
+            return Err(AdapterError::Policy(
+                "HTTP request contains duplicate header names".into(),
+            ));
+        }
         if is_sensitive_header(name) || is_controlled_header(name) {
             return Err(AdapterError::Policy(format!(
                 "header `{}` must be omitted or supplied as an opaque secret reference",
@@ -577,6 +682,13 @@ fn parse_headers(
             )));
         }
         HeaderValue::from_str(value).map_err(|_| AdapterError::HttpSyntax("header value"))?;
+    }
+    for header in &secret_headers {
+        if !header_names.insert(header.name.clone()) {
+            return Err(AdapterError::Policy(
+                "HTTP request contains duplicate header names".into(),
+            ));
+        }
     }
     if secret_headers
         .iter()
@@ -587,6 +699,35 @@ fn parse_headers(
         ));
     }
     Ok((public_headers, secret_headers))
+}
+
+fn header_bytes(headers: &BTreeMap<String, String>, limit: usize) -> Result<usize, AdapterError> {
+    headers.iter().try_fold(0_usize, |length, (name, value)| {
+        checked_header_bytes(length, name.len(), value.len(), limit)
+    })
+}
+
+fn checked_header_bytes(
+    current: usize,
+    name: usize,
+    value: usize,
+    limit: usize,
+) -> Result<usize, AdapterError> {
+    let length = current
+        .checked_add(name)
+        .and_then(|length| length.checked_add(value))
+        .ok_or(AdapterError::SizeLimit {
+            kind: "HTTP request headers",
+            limit,
+        })?;
+    if length > limit {
+        Err(AdapterError::SizeLimit {
+            kind: "HTTP request headers",
+            limit,
+        })
+    } else {
+        Ok(length)
+    }
 }
 
 fn preview_headers(spec: &HttpRequestSpec) -> BTreeMap<String, String> {
@@ -622,15 +763,18 @@ fn validate_header_name(name: &str) -> Result<(), AdapterError> {
 }
 
 fn is_sensitive_header(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase().replace('_', "-");
     matches!(
-        name.to_ascii_lowercase().as_str(),
-        "authorization"
-            | "proxy-authorization"
-            | "cookie"
-            | "set-cookie"
-            | "x-api-key"
-            | "x-auth-token"
-    )
+        normalized.as_str(),
+        "authorization" | "proxy-authorization" | "cookie" | "set-cookie"
+    ) || normalized.contains("token")
+        || normalized.contains("secret")
+        || normalized.contains("password")
+        || normalized.contains("credential")
+        || normalized == "api-key"
+        || normalized.ends_with("-api-key")
+        || normalized == "access-key"
+        || normalized.ends_with("-access-key")
 }
 
 fn is_controlled_header(name: &str) -> bool {
@@ -642,11 +786,17 @@ fn is_controlled_header(name: &str) -> bool {
 
 fn reject_sensitive_query(url: &Url) -> Result<(), AdapterError> {
     if url.query_pairs().any(|(name, _)| {
-        let name = name.to_ascii_lowercase();
+        let name = name.to_ascii_lowercase().replace(['-', '.'], "_");
         name.contains("token")
             || name.contains("secret")
             || name.contains("password")
-            || name.contains("api_key")
+            || name.contains("credential")
+            || name == "authorization"
+            || name == "auth"
+            || name == "signature"
+            || name == "sig"
+            || name == "key"
+            || name.ends_with("_key")
             || name.contains("apikey")
     }) {
         Err(AdapterError::Policy(
@@ -691,18 +841,59 @@ fn is_public_ip(address: IpAddr) -> bool {
                 || (octets[0] == 100 && (64..=127).contains(&octets[1]))
                 || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
                 || (octets[0] == 192 && octets[1] == 0 && octets[2] == 2)
+                || (octets[0] == 198 && (18..=19).contains(&octets[1]))
                 || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
                 || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113))
         }
         IpAddr::V6(address) => {
-            !(address.is_loopback()
-                || address.is_unspecified()
-                || address.is_multicast()
-                || (address.segments()[0] & 0xfe00) == 0xfc00
-                || (address.segments()[0] & 0xffc0) == 0xfe80
-                || (address.segments()[0] == 0x2001 && address.segments()[1] == 0x0db8))
+            let segments = address.segments();
+            let globally_routable_prefix = (0x2000..=0x3fff).contains(&segments[0]);
+            let ietf_special = segments[0] == 0x2001 && segments[1] < 0x0200;
+            let six_to_four = segments[0] == 0x2002;
+            let documentation = segments[0] == 0x3fff && segments[1] < 0x1000;
+            globally_routable_prefix && !ietf_special && !six_to_four && !documentation
         }
     }
+}
+
+fn redact_secret_text_values(headers: &mut BTreeMap<String, String>, secret: &[u8]) {
+    let Ok(secret) = std::str::from_utf8(secret) else {
+        return;
+    };
+    if secret.is_empty() {
+        return;
+    }
+    for value in headers.values_mut() {
+        *value = redact_secret_text(value, secret);
+    }
+}
+
+fn redact_secret_bytes(mut body: Vec<u8>, secrets: &[crate::SecretValue]) -> Vec<u8> {
+    const REDACTED: &[u8] = b"[REDACTED]";
+    for secret in secrets {
+        let needle = secret.expose();
+        if needle.is_empty() {
+            continue;
+        }
+        let replacement: Vec<u8> = if needle.len() >= REDACTED.len() {
+            REDACTED.to_vec()
+        } else {
+            vec![b'*'; needle.len()]
+        };
+        let mut redacted = Vec::with_capacity(body.len());
+        let mut remaining = body.as_slice();
+        while let Some(offset) = remaining
+            .windows(needle.len())
+            .position(|candidate| candidate == needle)
+        {
+            redacted.extend_from_slice(&remaining[..offset]);
+            redacted.extend_from_slice(&replacement);
+            remaining = &remaining[offset + needle.len()..];
+        }
+        redacted.extend_from_slice(remaining);
+        body = redacted;
+    }
+    body
 }
 
 #[cfg(test)]
@@ -716,7 +907,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::DenySecretResolver;
+    use crate::{DenySecretResolver, SecretValue};
 
     fn adapter(port: u16) -> HttpAdapter {
         HttpAdapter::new(HttpAdapterConfig {
@@ -729,7 +920,9 @@ mod tests {
                 allow_private_network: true,
             }],
             maximum_request_bytes: 1024,
+            maximum_request_header_bytes: 1024,
             maximum_response_bytes: 1024,
+            maximum_response_header_bytes: 1024,
             maximum_timeout_ms: 2_000,
         })
         .unwrap()
@@ -811,6 +1004,39 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn response_headers_are_bounded_before_receipt_persistence() {
+        let app = Router::new().route(
+            "/api/items",
+            post(|| async {
+                (
+                    reqwest::StatusCode::CREATED,
+                    [("x-large", "x".repeat(2_048))],
+                    "ok",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut adapter = adapter(port);
+        adapter.config.maximum_response_header_bytes = 1_024;
+        let context = AdapterContext {
+            transaction_id: veyra_protocol::TransactionId::new(),
+            secrets: Arc::new(DenySecretResolver),
+        };
+        let mut effect = effect(port);
+        effect.preview = adapter.preflight(&effect, &context).await.unwrap().preview;
+        let staged = adapter.stage(&effect, &context).await.unwrap();
+        assert!(matches!(
+            adapter.execute(&effect, &staged, &context).await,
+            Err(AdapterError::SizeLimit {
+                kind: "HTTP response headers",
+                ..
+            })
+        ));
+    }
+
     #[test]
     fn domain_method_and_sensitive_query_are_denied() {
         let adapter = adapter(8080);
@@ -820,6 +1046,11 @@ mod tests {
             public("http://127.0.0.1:8080/api/items?api_key=raw"),
         );
         assert!(adapter.validate(&wrong).is_err());
+        wrong.inputs.insert(
+            "url".into(),
+            public("http://127.0.0.1:8080/api/items?authorization=raw"),
+        );
+        assert!(adapter.validate(&wrong).is_err());
         wrong
             .inputs
             .insert("url".into(), public("http://example.com/api"));
@@ -827,9 +1058,82 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_and_excessive_request_headers_are_denied() {
+        let adapter = adapter(8080);
+        let mut duplicate = effect(8080);
+        duplicate
+            .inputs
+            .insert("headers".into(), public(json!({"x-custom": "public"})));
+        duplicate.inputs.insert(
+            "header:X-Custom".into(),
+            InputValue::SecretRef {
+                provider: "environment".into(),
+                key: "CUSTOM_SECRET".into(),
+                redacted: "[REDACTED]".into(),
+            },
+        );
+        assert!(adapter.validate(&duplicate).is_err());
+
+        let mut excessive = effect(8080);
+        let headers = (0..129)
+            .map(|index| (format!("x-header-{index}"), json!("value")))
+            .collect::<serde_json::Map<_, _>>();
+        excessive
+            .inputs
+            .insert("headers".into(), public(serde_json::Value::Object(headers)));
+        assert!(matches!(
+            adapter.validate(&excessive),
+            Err(AdapterError::SizeLimit {
+                kind: "HTTP request header count",
+                limit: 128
+            })
+        ));
+
+        let mut oversized = effect(8080);
+        oversized.inputs.insert(
+            "headers".into(),
+            public(json!({"x-custom": "x".repeat(2_048)})),
+        );
+        assert!(matches!(
+            adapter.validate(&oversized),
+            Err(AdapterError::SizeLimit {
+                kind: "HTTP request headers",
+                limit: 1024
+            })
+        ));
+    }
+
+    #[test]
     fn private_addresses_are_denied_unless_rule_explicitly_opts_in() {
         assert!(!is_public_ip(IpAddr::from_str("127.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("169.254.1.1").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("1.1.1.1").unwrap()));
+    }
+
+    #[test]
+    fn mapped_and_reserved_addresses_are_not_public() {
+        assert!(!is_public_ip("::ffff:127.0.0.1".parse().unwrap()));
+        assert!(!is_public_ip("198.18.0.1".parse().unwrap()));
+        assert!(!is_public_ip("fec0::1".parse().unwrap()));
+        assert!(is_public_ip("2606:4700:4700::1111".parse().unwrap()));
+    }
+
+    #[test]
+    fn reflected_secret_bytes_are_removed_from_headers_and_bodies() {
+        let secret = SecretValue::new(b"credential-value".to_vec());
+        let mut headers =
+            BTreeMap::from([("x-echo".into(), "prefix credential-value suffix".into())]);
+        redact_secret_text_values(&mut headers, secret.expose());
+        let body = redact_secret_bytes(
+            b"before credential-value after credential-value".to_vec(),
+            &[secret],
+        );
+        assert_eq!(headers["x-echo"], "prefix [REDACTED] suffix".to_owned());
+        assert_eq!(body, b"before [REDACTED] after [REDACTED]".to_vec());
+
+        let short = SecretValue::new(b"x".to_vec());
+        let body = redact_secret_bytes(vec![b'x'; 4_096], &[short]);
+        assert_eq!(body.len(), 4_096);
+        assert!(body.iter().all(|byte| *byte == b'*'));
     }
 }

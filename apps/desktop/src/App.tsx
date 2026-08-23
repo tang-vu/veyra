@@ -880,6 +880,11 @@ function ConnectionScreen({
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(initialError);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setError(initialError);
+  }, [initialError]);
+
   return (
     <main className="connection-screen">
       <section className="connection-card">
@@ -910,7 +915,7 @@ function ConnectionScreen({
             />
           </label>
           <label>
-            Local bearer token
+            Administrative bearer token
             <input
               type="password"
               autoComplete="off"
@@ -931,8 +936,8 @@ function ConnectionScreen({
           </button>
         </form>
         <small>
-          Credentials stay in this local browser profile and are sent only to
-          loopback.
+          This root credential is saved in this local browser profile and sent
+          only to the explicit loopback endpoint. Never give it to a model.
         </small>
       </section>
     </main>

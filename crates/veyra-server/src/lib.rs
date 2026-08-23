@@ -12,7 +12,9 @@ pub use api::{
     ApiState, AuditTextExport, DemoSeed, DemoSeedRequest, GrantApprovalRequest,
     IssueCapabilityRequest, RevokeCapabilityRequest, TransactionBundle, router,
 };
-pub use config::{PreparedInstance, RuntimeConfig, ServerConfigError, prepare_instance};
+pub use config::{
+    PlannerRuntimeConfig, PreparedInstance, RuntimeConfig, ServerConfigError, prepare_instance,
+};
 
 /// Serve the authenticated API, rejecting non-loopback listener addresses.
 ///
@@ -67,6 +69,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn authenticated_api_runs_the_real_reversible_demo() {
         let temporary = TempDir::new().unwrap();
         let config = RuntimeConfig::new(
@@ -87,6 +90,13 @@ mod tests {
 
         let unauthorized = client.get(format!("{root}/health")).send().await.unwrap();
         assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            unauthorized
+                .headers()
+                .get(reqwest::header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store")
+        );
 
         let seed: DemoSeed = client
             .post(format!("{root}/demo/seed"))

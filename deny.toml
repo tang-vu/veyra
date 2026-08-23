@@ -1,0 +1,45 @@
+[graph]
+all-features = true
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+]
+
+[advisories]
+unmaintained = "workspace"
+unsound = "all"
+ignore = [
+  { id = "RUSTSEC-2024-0429", reason = "Tauri 2.11 transitively pins glib 0.18 on Linux; neither Veyra nor its dependency graph calls the affected VariantStrIter API, and release bundles are currently Windows-only" },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+highlight = "all"
+deny = [
+  { crate = "git2", reason = "Veyra has no need for native Git execution" },
+  { crate = "openssl", use-instead = "rustls" },
+  { crate = "openssl-sys", use-instead = "rustls" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

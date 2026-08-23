@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 
+const TOKEN = `vyr_${"a".repeat(64)}`;
+
 describe("Veyra desktop control plane", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -24,12 +26,12 @@ describe("Veyra desktop control plane", () => {
     expect(
       await screen.findByRole("heading", { name: "Connect to Veyra" }),
     ).toBeTruthy();
-    expect(screen.getByLabelText("Local bearer token")).toBeTruthy();
+    expect(screen.getByLabelText("Administrative bearer token")).toBeTruthy();
   });
 
   it("loads the empty control plane through the authenticated real API shape", async () => {
     localStorage.setItem("veyra.apiUrl", "http://127.0.0.1:7843/v1/");
-    localStorage.setItem("veyra.token", "test-local-token");
+    localStorage.setItem("veyra.token", TOKEN);
     const fetch = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (input, init) => {
@@ -37,7 +39,7 @@ describe("Veyra desktop control plane", () => {
           input instanceof Request ? input.url : input.toString(),
         ).pathname;
         const authorization = new Headers(init?.headers).get("authorization");
-        expect(authorization).toBe("Bearer test-local-token");
+        expect(authorization).toBe(`Bearer ${TOKEN}`);
         if (path.endsWith("/health")) {
           return Response.json({
             status: "ok",
@@ -69,5 +71,19 @@ describe("Veyra desktop control plane", () => {
     ).toBeTruthy();
     expect(await screen.findByText("0 events verified")).toBeTruthy();
     expect(fetch).toHaveBeenCalled();
+  });
+
+  it("surfaces an asynchronous bootstrap connection failure", async () => {
+    localStorage.setItem("veyra.apiUrl", "http://127.0.0.1:7843/v1/");
+    localStorage.setItem("veyra.token", TOKEN);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("local daemon unavailable"),
+    );
+
+    render(<App />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "local daemon unavailable",
+    );
   });
 });

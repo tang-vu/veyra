@@ -1,33 +1,28 @@
 //! Secret resolution is deliberately isolated at the adapter boundary.
 
 use std::{collections::HashSet, fmt};
+use zeroize::Zeroizing;
 
 use crate::AdapterError;
 
 /// Secret bytes that redact debug output and zero their allocation on drop.
-pub struct SecretValue(Vec<u8>);
+pub struct SecretValue(Zeroizing<Vec<u8>>);
 
 impl SecretValue {
     /// Wrap newly resolved secret bytes.
     pub fn new(value: Vec<u8>) -> Self {
-        Self(value)
+        Self(Zeroizing::new(value))
     }
 
     /// Expose bytes only inside an adapter's final request/process construction boundary.
     pub fn expose(&self) -> &[u8] {
-        &self.0
+        self.0.as_slice()
     }
 }
 
 impl fmt::Debug for SecretValue {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("SecretValue([REDACTED])")
-    }
-}
-
-impl Drop for SecretValue {
-    fn drop(&mut self) {
-        self.0.fill(0);
     }
 }
 

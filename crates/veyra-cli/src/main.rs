@@ -1,8 +1,9 @@
 //! Inspectable command-line client for the authenticated local Veyra API.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{io::Read as _, path::PathBuf, sync::Arc, time::Duration};
 
 use clap::{Args, Parser, Subcommand};
+use futures_util::StreamExt;
 use reqwest::{StatusCode, Url};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -18,6 +19,9 @@ use veyra_server::{
 };
 
 const DEFAULT_API_URL: &str = "http://127.0.0.1:7843/v1/";
+const MAXIMUM_INPUT_FILE_BYTES: usize = 2 * 1024 * 1024;
+const MAXIMUM_TOKEN_FILE_BYTES: usize = 4096;
+const MAXIMUM_API_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(name = "veyra", version, about = "Reversible execution for AI agents")]
@@ -337,7 +341,7 @@ async fn run_demo(arguments: DemoArguments) -> Result<Value, CliError> {
     let client = ApiClient::new(
         Url::parse(&format!("http://{address}/v1/")).map_err(CliError::Url)?,
         instance.token.to_string(),
-    );
+    )?;
     let result = exercise_demo(&client, &config.workspace_root).await;
     server.abort();
     result
@@ -415,7 +419,16 @@ fn value_string(value: &Value, pointer: &str) -> Result<String, CliError> {
 }
 
 fn read_json<T: DeserializeOwned>(path: &std::path::Path) -> Result<T, CliError> {
-    let bytes = std::fs::read(path).map_err(CliError::Io)?;
+    let file = std::fs::File::open(path).map_err(CliError::Io)?;
+    let mut bytes = Vec::new();
+    file.take(u64::try_from(MAXIMUM_INPUT_FILE_BYTES).unwrap_or(u64::MAX) + 1)
+        .read_to_end(&mut bytes)
+        .map_err(CliError::Io)?;
+    if bytes.len() > MAXIMUM_INPUT_FILE_BYTES {
+        return Err(CliError::Input(format!(
+            "input file exceeds the {MAXIMUM_INPUT_FILE_BYTES}-byte limit"
+        )));
+    }
     serde_json::from_slice(&bytes).map_err(CliError::Json)
 }
 
@@ -434,7 +447,7 @@ fn print_value(value: &Value, compact: bool) {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct ApiClient {
     client: reqwest::Client,
     root: Url,
@@ -442,23 +455,63 @@ struct ApiClient {
 }
 
 impl ApiClient {
-    fn new(root: Url, token: String) -> Self {
-        Self {
-            client: reqwest::Client::new(),
+    fn new(mut root: Url, token: String) -> Result<Self, CliError> {
+        let loopback = match root.host() {
+            Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+            Some(url::Host::Ipv4(address)) => address.is_loopback(),
+            Some(url::Host::Ipv6(address)) => address.is_loopback(),
+            None => false,
+        };
+        if root.scheme() != "http"
+            || !loopback
+            || !root.username().is_empty()
+            || root.password().is_some()
+            || root.query().is_some()
+            || root.fragment().is_some()
+        {
+            return Err(CliError::Input(
+                "API URL must use HTTP on an explicit loopback host without credentials, query, or fragment"
+                    .into(),
+            ));
+        }
+        if !root.path().ends_with('/') {
+            let normalized = format!("{}/", root.path());
+            root.set_path(&normalized);
+        }
+        if token.len() < 64
+            || !token
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return Err(CliError::Input("API token is malformed".into()));
+        }
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .timeout(Duration::from_mins(1))
+            .build()
+            .map_err(CliError::Http)?;
+        Ok(Self {
+            client,
             root,
             token: Arc::from(token),
-        }
+        })
     }
 
     fn from_filesystem(root: Url, token_file: &std::path::Path) -> Result<Self, CliError> {
-        let token = std::fs::read_to_string(token_file)
-            .map_err(CliError::Io)?
+        let file = std::fs::File::open(token_file).map_err(CliError::Io)?;
+        let mut bytes = Vec::new();
+        file.take(u64::try_from(MAXIMUM_TOKEN_FILE_BYTES).unwrap_or(u64::MAX) + 1)
+            .read_to_end(&mut bytes)
+            .map_err(CliError::Io)?;
+        if bytes.len() > MAXIMUM_TOKEN_FILE_BYTES {
+            return Err(CliError::Input("API token file is too large".into()));
+        }
+        let token = String::from_utf8(bytes)
+            .map_err(|_| CliError::Input("API token is not UTF-8".into()))?
             .trim()
             .to_owned();
-        if token.is_empty() {
-            return Err(CliError::Input("API token file is empty".into()));
-        }
-        Ok(Self::new(root, token))
+        Self::new(root, token)
     }
 
     async fn get(&self, path: &str) -> Result<Value, CliError> {
@@ -514,7 +567,34 @@ impl ApiClient {
 
 async fn decode_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<T, CliError> {
     let status = response.status();
-    let bytes = response.bytes().await.map_err(CliError::Http)?;
+    if response.content_length().is_some_and(|length| {
+        length > u64::try_from(MAXIMUM_API_RESPONSE_BYTES).unwrap_or(u64::MAX)
+    }) {
+        return Err(CliError::Input(format!(
+            "local API response exceeds the {MAXIMUM_API_RESPONSE_BYTES}-byte limit"
+        )));
+    }
+    let mut bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .and_then(|length| usize::try_from(length).ok())
+            .unwrap_or_default()
+            .min(MAXIMUM_API_RESPONSE_BYTES),
+    );
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(CliError::Http)?;
+        if bytes
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > MAXIMUM_API_RESPONSE_BYTES)
+        {
+            return Err(CliError::Input(format!(
+                "local API response exceeds the {MAXIMUM_API_RESPONSE_BYTES}-byte limit"
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     if !status.is_success() {
         let message = serde_json::from_slice::<Value>(&bytes)
             .ok()
@@ -523,6 +603,29 @@ async fn decode_response<T: DeserializeOwned>(response: reqwest::Response) -> Re
         return Err(CliError::Api { status, message });
     }
     serde_json::from_slice(&bytes).map_err(CliError::Json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn token() -> String {
+        format!("vyr_{}{}", PrincipalId::new(), PrincipalId::new()).replace('-', "")
+    }
+
+    #[test]
+    fn api_client_refuses_to_send_local_authority_to_remote_or_credential_urls() {
+        assert!(ApiClient::new(Url::parse("http://127.0.0.1:7843/v1").unwrap(), token()).is_ok());
+        assert!(ApiClient::new(Url::parse("http://[::1]:7843/v1").unwrap(), token()).is_ok());
+        assert!(ApiClient::new(Url::parse("https://example.com/v1/").unwrap(), token()).is_err());
+        assert!(
+            ApiClient::new(
+                Url::parse("http://operator:secret@127.0.0.1:7843/v1/").unwrap(),
+                token(),
+            )
+            .is_err()
+        );
+    }
 }
 
 #[derive(Debug, Error)]

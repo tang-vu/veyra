@@ -345,5 +345,5 @@ export interface DemoSeed {
 export interface RecoveryRecord {
   transaction_id: Id;
   state: TransactionState;
-  action: "resume_safe" | "resume_verification" | "manual_recovery";
+  action: "resume_safe" | "manual_recovery";
 }

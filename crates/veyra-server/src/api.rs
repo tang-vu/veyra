@@ -90,7 +90,20 @@ pub fn router(state: ApiState) -> Router {
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(no_store_response))
         .with_state(state)
+}
+
+async fn no_store_response(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        header::HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    response
 }
 
 async fn authenticate(

@@ -1,0 +1,313 @@
+[
+  {
+    "id": "EV-001",
+    "category": "safe_success",
+    "title": "Filesystem transaction commits with verified postconditions",
+    "gate": "rust",
+    "probe": "full_filesystem_flow_commits_and_rolls_back",
+    "expected": "committed_then_rolled_back"
+  },
+  {
+    "id": "EV-002",
+    "category": "denial",
+    "title": "An effect without capability never executes",
+    "gate": "rust",
+    "probe": "no_effect_executes_without_capability",
+    "expected": "denied"
+  },
+  {
+    "id": "EV-003",
+    "category": "prompt_injection",
+    "title": "Injected authority claims remain untrusted text",
+    "gate": "rust",
+    "probe": "prompt_injection_text_never_creates_tool_authority",
+    "expected": "denied"
+  },
+  {
+    "id": "EV-004",
+    "category": "confused_deputy",
+    "title": "An agent cannot approve its own effect",
+    "gate": "rust",
+    "probe": "agent_cannot_approve_its_own_effect",
+    "expected": "authority_error"
+  },
+  {
+    "id": "EV-005",
+    "category": "capability",
+    "title": "Policy denies by default and requires exact live scope",
+    "gate": "rust",
+    "probe": "deny_by_default_and_allow_with_exact_live_capability",
+    "expected": "exact_scope_only"
+  },
+  {
+    "id": "EV-006",
+    "category": "capability_escalation",
+    "title": "Filesystem scope matching is component-aware",
+    "gate": "rust",
+    "probe": "path_prefix_is_component_aware",
+    "expected": "sibling_denied"
+  },
+  {
+    "id": "EV-007",
+    "category": "path_traversal",
+    "title": "Traversal and internal staging paths are rejected",
+    "gate": "rust",
+    "probe": "traversal_and_reserved_paths_are_rejected",
+    "expected": "containment_error"
+  },
+  {
+    "id": "EV-008",
+    "category": "symlink_escape",
+    "title": "Symlink escape cannot leave a workspace",
+    "gate": "rust",
+    "probe": "symlink_escape_is_rejected",
+    "expected": "containment_error",
+    "unsupported_platforms": ["win32"],
+    "environment_limitation": "The adversarial symlink fixture is Unix-only because unprivileged Windows symlink creation requires Developer Mode or elevation; lexical traversal and cap-std containment tests still run on Windows."
+  },
+  {
+    "id": "EV-009",
+    "category": "toctou",
+    "title": "Mutation after preview is rejected before staging",
+    "gate": "rust",
+    "probe": "mutation_after_preview_is_rejected_before_stage",
+    "expected": "state_changed"
+  },
+  {
+    "id": "EV-010",
+    "category": "approval_mutation",
+    "title": "Approval digest rejects mutated effect content",
+    "gate": "rust",
+    "probe": "approval_rejects_mutated_effect_and_replay",
+    "expected": "digest_mismatch"
+  },
+  {
+    "id": "EV-011",
+    "category": "approval_replay",
+    "title": "Approval nonce cannot authorize twice",
+    "gate": "rust",
+    "probe": "approval_nonce_is_single_use",
+    "expected": "approval_replay"
+  },
+  {
+    "id": "EV-012",
+    "category": "receipt_forgery",
+    "title": "Modified receipt authentication fails",
+    "gate": "rust",
+    "probe": "forged_or_modified_receipts_are_rejected",
+    "expected": "forged_receipt"
+  },
+  {
+    "id": "EV-013",
+    "category": "journal_tamper",
+    "title": "Corrupt and missing journal links are detected",
+    "gate": "rust",
+    "probe": "chain_detects_payload_tampering_and_missing_links",
+    "expected": "invalid_chain"
+  },
+  {
+    "id": "EV-014",
+    "category": "secret_leakage",
+    "title": "Nested sensitive audit fields are redacted",
+    "gate": "rust",
+    "probe": "audit_payloads_redact_nested_secrets",
+    "expected": "redacted_export"
+  },
+  {
+    "id": "EV-015",
+    "category": "idempotency",
+    "title": "A completed idempotency key returns its original receipt",
+    "gate": "rust",
+    "probe": "duplicate_idempotency_returns_original_receipt",
+    "expected": "no_duplicate"
+  },
+  {
+    "id": "EV-016",
+    "category": "concurrency",
+    "title": "Concurrent reservations have one winner",
+    "gate": "rust",
+    "probe": "concurrent_idempotency_reservation_has_exactly_one_winner",
+    "expected": "one_acquired"
+  },
+  {
+    "id": "EV-017",
+    "category": "concurrency",
+    "title": "Concurrent transaction runs cross the boundary once",
+    "gate": "rust",
+    "probe": "concurrent_run_requests_cross_the_effect_boundary_once",
+    "expected": "one_execution"
+  },
+  {
+    "id": "EV-018",
+    "category": "crash_recovery",
+    "title": "Every nonterminal phase has a conservative restart class",
+    "gate": "rust",
+    "probe": "restart_classification_is_conservative_at_every_recoverable_phase",
+    "expected": "classified"
+  },
+  {
+    "id": "EV-019",
+    "category": "crash_recovery",
+    "title": "Durable executing state reopens as manual recovery",
+    "gate": "rust",
+    "probe": "durable_reopen_preserves_chain_and_marks_in_flight_execution_manual",
+    "expected": "manual_recovery"
+  },
+  {
+    "id": "EV-020",
+    "category": "rollback",
+    "title": "Supported filesystem state is restored",
+    "gate": "rust",
+    "probe": "create_verify_and_rollback_round_trip",
+    "expected": "restored"
+  },
+  {
+    "id": "EV-021",
+    "category": "partial_compensation",
+    "title": "Later human work is not clobbered by rollback",
+    "gate": "rust",
+    "probe": "rollback_reports_partial_compensation_instead_of_clobbering_later_work",
+    "expected": "partially_compensated"
+  },
+  {
+    "id": "EV-022",
+    "category": "malicious_adapter",
+    "title": "Outcome text cannot spoof terminal state",
+    "gate": "rust",
+    "probe": "adapter_result_outcome_cannot_spoof_terminal_output",
+    "expected": "malformed_result_rejected"
+  },
+  {
+    "id": "EV-023",
+    "category": "http_ssrf",
+    "title": "Private network destinations require explicit opt-in",
+    "gate": "rust",
+    "probe": "private_addresses_are_denied_unless_rule_explicitly_opts_in",
+    "expected": "private_denied"
+  },
+  {
+    "id": "EV-024",
+    "category": "http_policy",
+    "title": "HTTP domain, method, and sensitive query are constrained",
+    "gate": "rust",
+    "probe": "domain_method_and_sensitive_query_are_denied",
+    "expected": "policy_denied"
+  },
+  {
+    "id": "EV-025",
+    "category": "process_policy",
+    "title": "Process execution is disabled by default",
+    "gate": "rust",
+    "probe": "process_is_disabled_by_default_configuration",
+    "expected": "disabled"
+  },
+  {
+    "id": "EV-026",
+    "category": "process_policy",
+    "title": "Safe process demo uses exact argv without a shell",
+    "gate": "rust",
+    "probe": "safe_demo_runs_one_exact_argv_without_a_shell",
+    "expected": "exit_0_irreversible"
+  },
+  {
+    "id": "EV-027",
+    "category": "schema",
+    "title": "Unknown effect fields fail strict deserialization",
+    "gate": "rust",
+    "probe": "unknown_effect_fields_are_rejected",
+    "expected": "schema_rejected"
+  },
+  {
+    "id": "EV-028",
+    "category": "sdk",
+    "title": "SDK enforces loopback and does not leak auth in errors",
+    "gate": "typescript",
+    "expected": "typed_client_pass"
+  },
+  {
+    "id": "EV-029",
+    "category": "desktop",
+    "title": "Desktop has explicit connected and empty states",
+    "gate": "typescript",
+    "expected": "ui_smoke_pass"
+  },
+  {
+    "id": "EV-030",
+    "category": "vertical_slice",
+    "title": "No-key CLI demo commits and rolls back over the API",
+    "gate": "demo",
+    "expected": "committed_audited_rolled_back"
+  },
+  {
+    "id": "EV-031",
+    "category": "toctou",
+    "title": "A destination created after staging is not overwritten",
+    "gate": "rust",
+    "probe": "destination_created_after_staging_is_never_clobbered",
+    "expected": "concurrent_writer_preserved"
+  },
+  {
+    "id": "EV-032",
+    "category": "malicious_adapter",
+    "title": "Malformed and oversized stage descriptors are rejected",
+    "gate": "rust",
+    "probe": "malformed_or_oversized_stage_descriptors_are_rejected",
+    "expected": "stage_rejected"
+  },
+  {
+    "id": "EV-033",
+    "category": "malicious_adapter",
+    "title": "Incomplete verification cannot produce a commit",
+    "gate": "rust",
+    "probe": "malformed_verification_triggers_rollback_instead_of_commit",
+    "expected": "rolled_back"
+  },
+  {
+    "id": "EV-034",
+    "category": "model_output",
+    "title": "Planner provider responses are bounded while streaming",
+    "gate": "rust",
+    "probe": "provider_response_chunks_are_bounded_before_allocation_growth",
+    "expected": "size_limit"
+  },
+  {
+    "id": "EV-035",
+    "category": "secret_leakage",
+    "title": "HTTP-reflected secret bytes are redacted from persisted results",
+    "gate": "rust",
+    "probe": "reflected_secret_bytes_are_removed_from_headers_and_bodies",
+    "expected": "redacted_result"
+  },
+  {
+    "id": "EV-036",
+    "category": "http_ssrf",
+    "title": "Mapped and special-use addresses are not treated as public",
+    "gate": "rust",
+    "probe": "mapped_and_reserved_addresses_are_not_public",
+    "expected": "special_addresses_denied"
+  },
+  {
+    "id": "EV-037",
+    "category": "journal_tamper",
+    "title": "Transaction JSON must match its indexed state",
+    "gate": "rust",
+    "probe": "transaction_snapshot_must_match_its_indexed_state",
+    "expected": "corruption_detected"
+  },
+  {
+    "id": "EV-038",
+    "category": "retry_policy",
+    "title": "Automatic retries and unenforceable constraints fail closed",
+    "gate": "rust",
+    "probe": "unsupported_retries_and_unenforceable_constraints_are_denied",
+    "expected": "policy_denied"
+  },
+  {
+    "id": "EV-039",
+    "category": "http_bounds",
+    "title": "Oversized response headers are rejected before persistence",
+    "gate": "rust",
+    "probe": "response_headers_are_bounded_before_receipt_persistence",
+    "expected": "size_limit"
+  }
+]

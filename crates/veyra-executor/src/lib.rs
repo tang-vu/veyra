@@ -273,6 +273,9 @@ pub enum AdapterError {
     /// HTTP construction or request failed; the underlying URL is not rendered normally.
     #[error("HTTP adapter request failed")]
     Network(#[source] reqwest::Error),
+    /// HTTP destination name resolution failed; the queried hostname is not rendered normally.
+    #[error("HTTP destination resolution failed")]
+    Resolution(#[source] std::io::Error),
     /// URL or HTTP method parsing failed.
     #[error("HTTP effect contains an invalid {0}")]
     HttpSyntax(&'static str),
@@ -307,6 +310,7 @@ impl AdapterError {
             Self::SizeLimit { .. } => "size_limit",
             Self::Filesystem { .. } => "filesystem_error",
             Self::Network(_) => "network_error",
+            Self::Resolution(_) => "dns_error",
             Self::HttpSyntax(_) => "http_syntax",
             Self::Process(_) => "process_error",
             Self::InvalidStage(_) => "invalid_stage",

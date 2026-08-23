@@ -1,6 +1,9 @@
 //! Generate committed JSON Schemas from authoritative Rust protocol types.
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use schemars::{JsonSchema, schema_for};
 use serde::Serialize;
@@ -11,7 +14,7 @@ use veyra_protocol::{
 };
 
 fn write_schema<T: JsonSchema + ?Sized>(
-    directory: &PathBuf,
+    directory: &Path,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let schema = schema_for!(T);
@@ -35,10 +38,10 @@ struct SchemaDocument<T> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let directory = std::env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("packages/protocol-schema/schema"));
+    let directory = std::env::args_os().nth(1).map_or_else(
+        || PathBuf::from("packages/protocol-schema/schema"),
+        PathBuf::from,
+    );
     fs::create_dir_all(&directory)?;
     write_schema::<Principal>(&directory, "principal")?;
     write_schema::<Intent>(&directory, "intent")?;

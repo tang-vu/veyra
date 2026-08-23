@@ -20,11 +20,12 @@ tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-veyra-core = { path = "../veyra-core" }
-veyra-executor = { path = "../veyra-executor" }
-veyra-journal = { path = "../veyra-journal" }
-veyra-policy = { path = "../veyra-policy" }
-veyra-protocol = { path = "../veyra-protocol" }
+url.workspace = true
+veyra-core = { version = "0.1.0", path = "../veyra-core" }
+veyra-executor = { version = "0.1.0", path = "../veyra-executor" }
+veyra-journal = { version = "0.1.0", path = "../veyra-journal" }
+veyra-policy = { version = "0.1.0", path = "../veyra-policy" }
+veyra-protocol = { version = "0.1.0", path = "../veyra-protocol" }
 
 [dev-dependencies]
 reqwest.workspace = true

@@ -3,6 +3,7 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::{Url, header::HeaderValue};
 use schemars::schema_for;
 use serde_json::{Value, json};
@@ -203,6 +204,8 @@ pub struct OpenAiPlannerConfig {
     pub api_key_environment: String,
     /// Provider request timeout.
     pub timeout: Duration,
+    /// Maximum provider response body accepted before JSON decoding.
+    pub maximum_response_bytes: usize,
 }
 
 /// Planner using an `OpenAI` Responses-compatible endpoint with strict JSON Schema output.
@@ -217,15 +220,31 @@ impl OpenAiCompatiblePlanner {
     ///
     /// # Errors
     ///
-    /// Returns [`PlannerError`] if the endpoint is not HTTPS or the HTTP client cannot initialize.
+    /// Returns [`PlannerError`] if configuration is unsafe or the HTTP client cannot initialize.
     pub fn new(config: OpenAiPlannerConfig) -> Result<Self, PlannerError> {
-        if config.endpoint.scheme() != "https" {
+        if config.endpoint.scheme() != "https"
+            || config.endpoint.host_str().is_none()
+            || !config.endpoint.username().is_empty()
+            || config.endpoint.password().is_some()
+            || config.endpoint.fragment().is_some()
+        {
             return Err(PlannerError::Configuration(
-                "model endpoint must use HTTPS".into(),
+                "model endpoint must be an HTTPS URL without credentials or a fragment".into(),
+            ));
+        }
+        if config.model.trim().is_empty()
+            || config.api_key_environment.trim().is_empty()
+            || config.timeout.is_zero()
+            || config.maximum_response_bytes == 0
+        {
+            return Err(PlannerError::Configuration(
+                "model, credential environment, timeout, and response limit must be non-empty"
+                    .into(),
             ));
         }
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
             .timeout(config.timeout)
             .build()
             .map_err(PlannerError::Provider)?;
@@ -244,12 +263,14 @@ impl Planner for OpenAiCompatiblePlanner {
             PlannerError::MissingCredential(self.config.api_key_environment.clone())
         })?;
         let api_key = SecretValue::new(raw_key.into_bytes());
-        let authorization = HeaderValue::from_bytes(
-            [b"Bearer ".as_slice(), api_key.expose()]
-                .concat()
-                .as_slice(),
-        )
-        .map_err(|_| PlannerError::Configuration("API key is not a valid header value".into()))?;
+        let mut authorization_bytes = Vec::with_capacity(7 + api_key.expose().len());
+        authorization_bytes.extend_from_slice(b"Bearer ");
+        authorization_bytes.extend_from_slice(api_key.expose());
+        let authorization_bytes = SecretValue::new(authorization_bytes);
+        let authorization =
+            HeaderValue::from_bytes(authorization_bytes.expose()).map_err(|_| {
+                PlannerError::Configuration("API key is not a valid header value".into())
+            })?;
         let schema = serde_json::to_value(schema_for!(Plan)).map_err(PlannerError::Json)?;
         let request = json!({
             "model": self.config.model,
@@ -273,12 +294,34 @@ impl Planner for OpenAiCompatiblePlanner {
             .send()
             .await
             .map_err(PlannerError::Provider)?;
-        drop(api_key);
+        drop((authorization_bytes, api_key));
         let status = response.status();
         if !status.is_success() {
             return Err(PlannerError::ProviderStatus(status.as_u16()));
         }
-        let response: Value = response.json().await.map_err(PlannerError::Provider)?;
+        if response.content_length().is_some_and(|length| {
+            length > u64::try_from(self.config.maximum_response_bytes).unwrap_or(u64::MAX)
+        }) {
+            return Err(PlannerError::ResponseTooLarge {
+                limit: self.config.maximum_response_bytes,
+            });
+        }
+        let mut body = Vec::with_capacity(
+            response
+                .content_length()
+                .and_then(|length| usize::try_from(length).ok())
+                .unwrap_or_default()
+                .min(self.config.maximum_response_bytes),
+        );
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            append_bounded(
+                &mut body,
+                &chunk.map_err(PlannerError::Provider)?,
+                self.config.maximum_response_bytes,
+            )?;
+        }
+        let response: Value = serde_json::from_slice(&body).map_err(PlannerError::Json)?;
         let text = response_text(&response).ok_or(PlannerError::MissingOutput)?;
         serde_json::from_str(text).map_err(PlannerError::Json)
     }
@@ -314,6 +357,18 @@ fn response_text(response: &Value) -> Option<&str> {
         })
 }
 
+fn append_bounded(body: &mut Vec<u8>, chunk: &[u8], limit: usize) -> Result<(), PlannerError> {
+    if body
+        .len()
+        .checked_add(chunk.len())
+        .is_none_or(|length| length > limit)
+    {
+        return Err(PlannerError::ResponseTooLarge { limit });
+    }
+    body.extend_from_slice(chunk);
+    Ok(())
+}
+
 fn sha256(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let digest = Sha256::digest(bytes);
@@ -343,6 +398,12 @@ pub enum PlannerError {
     /// Provider returned a non-success status; its possibly sensitive body is not surfaced.
     #[error("planner provider returned HTTP status {0}")]
     ProviderStatus(u16),
+    /// Provider response exceeded the configured allocation bound.
+    #[error("planner provider response exceeded the {limit}-byte limit")]
+    ResponseTooLarge {
+        /// Configured maximum response body length.
+        limit: usize,
+    },
     /// Provider response contains no structured output text.
     #[error("planner provider response contained no output text")]
     MissingOutput,
@@ -395,5 +456,40 @@ mod tests {
             ]
         });
         assert_eq!(response_text(&value), Some("{\"schema_version\":\"v\"}"));
+    }
+
+    #[test]
+    fn provider_configuration_rejects_unsafe_or_unbounded_values() {
+        let base = OpenAiPlannerConfig {
+            endpoint: Url::parse("https://api.example.test/v1/responses").unwrap(),
+            model: "model".into(),
+            api_key_environment: "VEYRA_TEST_API_KEY".into(),
+            timeout: Duration::from_secs(10),
+            maximum_response_bytes: 1024,
+        };
+        assert!(OpenAiCompatiblePlanner::new(base.clone()).is_ok());
+
+        let mut cleartext = base.clone();
+        cleartext.endpoint = Url::parse("http://api.example.test/v1/responses").unwrap();
+        assert!(OpenAiCompatiblePlanner::new(cleartext).is_err());
+
+        let mut embedded_credential = base.clone();
+        embedded_credential.endpoint =
+            Url::parse("https://operator:secret@api.example.test/v1/responses").unwrap();
+        assert!(OpenAiCompatiblePlanner::new(embedded_credential).is_err());
+
+        let mut unbounded = base;
+        unbounded.maximum_response_bytes = 0;
+        assert!(OpenAiCompatiblePlanner::new(unbounded).is_err());
+    }
+
+    #[test]
+    fn provider_response_chunks_are_bounded_before_allocation_growth() {
+        let mut body = vec![1, 2];
+        append_bounded(&mut body, &[3, 4], 4).unwrap();
+        assert_eq!(body, vec![1, 2, 3, 4]);
+        let error = append_bounded(&mut body, &[5], 4).unwrap_err();
+        assert!(matches!(error, PlannerError::ResponseTooLarge { limit: 4 }));
+        assert_eq!(body, vec![1, 2, 3, 4]);
     }
 }

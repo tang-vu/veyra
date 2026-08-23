@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use veyra_protocol::{EffectInputs, InputValue};
+use veyra_protocol::{Effect, EffectInputs, InputValue};
 
 use crate::AdapterError;
 
@@ -93,4 +93,35 @@ pub(crate) fn no_secret_inputs(inputs: &EffectInputs) -> Result<(), AdapterError
     } else {
         Ok(())
     }
+}
+
+pub(crate) fn no_unsupported_capability_constraints(
+    effect: &Effect,
+    adapter_specific: &[&str],
+) -> Result<(), AdapterError> {
+    const GLOBAL: [&str; 3] = ["max_timeout_ms", "max_risk", "allow_irreversible"];
+    if let Some(name) = effect
+        .required_capabilities
+        .iter()
+        .flat_map(|requirement| requirement.constraints.keys())
+        .find(|name| !GLOBAL.contains(&name.as_str()) && !adapter_specific.contains(&name.as_str()))
+    {
+        return Err(AdapterError::InvalidEffect(format!(
+            "capability constraint `{name}` has no adapter enforcement"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn redact_secret_text(value: &str, secret: &str) -> String {
+    const MARKER: &str = "[REDACTED]";
+    if secret.is_empty() {
+        return value.to_owned();
+    }
+    let replacement = if secret.len() >= MARKER.len() {
+        MARKER.to_owned()
+    } else {
+        "*".repeat(secret.len())
+    };
+    value.replace(secret, &replacement)
 }

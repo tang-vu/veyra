@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 async-trait.workspace = true
 chrono.workspace = true
+cap-fs-ext.workspace = true
 cap-std.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
@@ -20,7 +21,8 @@ similar.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
-veyra-protocol = { path = "../veyra-protocol" }
+veyra-protocol = { version = "0.1.0", path = "../veyra-protocol" }
+zeroize.workspace = true
 
 [dev-dependencies]
 axum.workspace = true

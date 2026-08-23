@@ -1,0 +1,20 @@
+{
+  "schema_version": "veyra.protocol/v1",
+  "id": "ebc832ed-99f8-49f9-8c28-90360fcdf5c5",
+  "principal_id": "5b74e655-11f4-4a06-86f5-4923551394b8",
+  "summary": "Create a greeting inside the confined demo directory",
+  "requested_resources": [
+    {
+      "kind": "filesystem",
+      "workspace": "default",
+      "path": "demo"
+    }
+  ],
+  "context": {
+    "workspace": "default",
+    "operation": "create",
+    "path": "demo/hello.txt",
+    "content": "Hello from a capability-confined Veyra transaction.\n"
+  },
+  "created_at": "2026-08-23T00:00:00Z"
+}

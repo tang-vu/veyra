@@ -7,6 +7,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions},
@@ -20,7 +21,7 @@ use veyra_protocol::{Condition, Effect, Preview, ResourceScope, Reversibility, V
 use crate::{
     AdapterContext, AdapterError, AdapterPreflight, AdapterRecovery, AdapterResult, EffectAdapter,
     StagedEffect,
-    util::{no_secret_inputs, public_string, sha256},
+    util::{no_secret_inputs, no_unsupported_capability_constraints, public_string, sha256},
 };
 
 const INTERNAL_DIRECTORY: &str = ".veyra";
@@ -234,6 +235,7 @@ impl FilesystemAdapter {
         &self,
         effect: &Effect,
         staged: &StagedEffect,
+        context: &AdapterContext,
     ) -> Result<FsStage, AdapterError> {
         if staged.adapter != self.name() || staged.effect_id != effect.id {
             return Err(AdapterError::InvalidStage(
@@ -246,7 +248,42 @@ impl FilesystemAdapter {
                 "effect content changed after staging".into(),
             ));
         }
-        serde_json::from_value(staged.data.clone()).map_err(AdapterError::Serialization)
+        let stage: FsStage =
+            serde_json::from_value(staged.data.clone()).map_err(AdapterError::Serialization)?;
+        let paths = self.paths(effect)?;
+        let expected_source = display_relative(&paths[0]);
+        let expected_destination = paths.get(1).map(|path| display_relative(path));
+        let expected_path = expected_destination.as_ref().map_or_else(
+            || expected_source.clone(),
+            |destination| format!("{expected_source} -> {destination}"),
+        );
+        let Preview::Filesystem {
+            operation,
+            path,
+            before_sha256,
+            after_sha256,
+            ..
+        } = &effect.preview
+        else {
+            return Err(AdapterError::InvalidStage(
+                "filesystem stage has no authoritative preview".into(),
+            ));
+        };
+        let expected_stage_directory =
+            display_relative(&stage_directory(context.transaction_id, effect.id));
+        if operation != stage.operation.name()
+            || path != &expected_path
+            || stage.source != expected_source
+            || stage.destination != expected_destination
+            || &stage.before_digest != before_sha256
+            || &stage.after_digest != after_sha256
+            || stage.stage_directory != expected_stage_directory
+        {
+            return Err(AdapterError::InvalidStage(
+                "filesystem stage details disagree with the approved effect".into(),
+            ));
+        }
+        Ok(stage)
     }
 }
 
@@ -262,6 +299,7 @@ impl EffectAdapter for FilesystemAdapter {
                 "adapter field is not `filesystem`".into(),
             ));
         }
+        no_unsupported_capability_constraints(effect, &[])?;
         no_secret_inputs(&effect.inputs)?;
         let paths = self.paths(effect)?;
         match effect.operation.as_str() {
@@ -340,21 +378,22 @@ impl EffectAdapter for FilesystemAdapter {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn execute(
         &self,
         effect: &Effect,
         staged: &StagedEffect,
-        _context: &AdapterContext,
+        context: &AdapterContext,
     ) -> Result<AdapterResult, AdapterError> {
-        let stage = self.decode_stage(effect, staged)?;
+        let stage = self.decode_stage(effect, staged, context)?;
         let source = normalized_relative_path(&stage.source)?;
         let stage_directory = normalized_internal_path(&stage.stage_directory)?;
         match stage.operation {
             FsOperation::Read => {
-                let content =
+                let file_bytes =
                     read_regular_file(&self.directory, &source, self.config.maximum_file_bytes)?;
-                require_digest(&content, stage.before_digest.as_deref(), "read source")?;
-                let text = String::from_utf8(content).map_err(|_| {
+                require_digest(&file_bytes, stage.before_digest.as_deref(), "read source")?;
+                let text = String::from_utf8(file_bytes).map_err(|_| {
                     AdapterError::InvalidEffect("read currently requires UTF-8 content".into())
                 })?;
                 Ok(AdapterResult {
@@ -364,12 +403,21 @@ impl EffectAdapter for FilesystemAdapter {
                 })
             }
             FsOperation::Create => {
-                require_absent(&self.directory, &source)?;
                 require_existing_parent(&self.directory, &source)?;
                 let prepared = stage_directory.join("prepared");
-                self.directory
-                    .rename(&prepared, &self.directory, &source)
-                    .map_err(|error| fs_error("commit staged create", &source, error))?;
+                verify_captured_file(
+                    &self.directory,
+                    &prepared,
+                    stage.after_digest.as_deref(),
+                    "prepared create content",
+                    self.config.maximum_file_bytes,
+                )?;
+                move_noreplace_anchored(
+                    &self.directory,
+                    &prepared,
+                    &source,
+                    "commit staged create",
+                )?;
                 Ok(AdapterResult {
                     outcome: "created".into(),
                     data: json!({"path": stage.source}),
@@ -377,17 +425,52 @@ impl EffectAdapter for FilesystemAdapter {
                 })
             }
             FsOperation::Patch => {
+                let prepared = stage_directory.join("prepared");
+                verify_captured_file(
+                    &self.directory,
+                    &prepared,
+                    stage.after_digest.as_deref(),
+                    "prepared patch content",
+                    self.config.maximum_file_bytes,
+                )?;
                 let current =
                     read_regular_file(&self.directory, &source, self.config.maximum_file_bytes)?;
                 require_digest(&current, stage.before_digest.as_deref(), "patch source")?;
                 let displaced = stage_directory.join("displaced");
-                self.directory
-                    .rename(&source, &self.directory, &displaced)
-                    .map_err(|error| fs_error("stage current patch target", &source, error))?;
-                let prepared = stage_directory.join("prepared");
-                if let Err(error) = self.directory.rename(&prepared, &self.directory, &source) {
-                    let _ = self.directory.rename(&displaced, &self.directory, &source);
-                    return Err(fs_error("commit staged patch", &source, error));
+                move_noreplace_anchored(
+                    &self.directory,
+                    &source,
+                    &displaced,
+                    "stage current patch target",
+                )?;
+                if let Err(error) = verify_captured_file(
+                    &self.directory,
+                    &displaced,
+                    stage.before_digest.as_deref(),
+                    "captured patch source",
+                    self.config.maximum_file_bytes,
+                ) {
+                    let _ = move_noreplace_anchored(
+                        &self.directory,
+                        &displaced,
+                        &source,
+                        "restore changed patch source",
+                    );
+                    return Err(error);
+                }
+                if let Err(error) = move_noreplace_anchored(
+                    &self.directory,
+                    &prepared,
+                    &source,
+                    "commit staged patch",
+                ) {
+                    let _ = move_noreplace_anchored(
+                        &self.directory,
+                        &displaced,
+                        &source,
+                        "restore failed patch",
+                    );
+                    return Err(error);
                 }
                 Ok(AdapterResult {
                     outcome: "patched".into(),
@@ -404,11 +487,38 @@ impl EffectAdapter for FilesystemAdapter {
                 let current =
                     read_regular_file(&self.directory, &source, self.config.maximum_file_bytes)?;
                 require_digest(&current, stage.before_digest.as_deref(), "move source")?;
-                require_absent(&self.directory, &destination_path)?;
                 require_existing_parent(&self.directory, &destination_path)?;
-                self.directory
-                    .rename(&source, &self.directory, &destination_path)
-                    .map_err(|error| fs_error("move file", &source, error))?;
+                let moving = stage_directory.join("moving");
+                move_noreplace_anchored(&self.directory, &source, &moving, "capture move source")?;
+                if let Err(error) = verify_captured_file(
+                    &self.directory,
+                    &moving,
+                    stage.before_digest.as_deref(),
+                    "captured move source",
+                    self.config.maximum_file_bytes,
+                ) {
+                    let _ = move_noreplace_anchored(
+                        &self.directory,
+                        &moving,
+                        &source,
+                        "restore changed move source",
+                    );
+                    return Err(error);
+                }
+                if let Err(error) = move_noreplace_anchored(
+                    &self.directory,
+                    &moving,
+                    &destination_path,
+                    "move file",
+                ) {
+                    let _ = move_noreplace_anchored(
+                        &self.directory,
+                        &moving,
+                        &source,
+                        "restore failed move",
+                    );
+                    return Err(error);
+                }
                 Ok(AdapterResult {
                     outcome: "moved".into(),
                     data: json!({"from": stage.source, "to": destination}),
@@ -420,9 +530,22 @@ impl EffectAdapter for FilesystemAdapter {
                     read_regular_file(&self.directory, &source, self.config.maximum_file_bytes)?;
                 require_digest(&current, stage.before_digest.as_deref(), "delete source")?;
                 let deleted = stage_directory.join("deleted");
-                self.directory
-                    .rename(&source, &self.directory, &deleted)
-                    .map_err(|error| fs_error("stage deleted file", &source, error))?;
+                move_noreplace_anchored(&self.directory, &source, &deleted, "stage deleted file")?;
+                if let Err(error) = verify_captured_file(
+                    &self.directory,
+                    &deleted,
+                    stage.before_digest.as_deref(),
+                    "captured delete source",
+                    self.config.maximum_file_bytes,
+                ) {
+                    let _ = move_noreplace_anchored(
+                        &self.directory,
+                        &deleted,
+                        &source,
+                        "restore changed delete source",
+                    );
+                    return Err(error);
+                }
                 Ok(AdapterResult {
                     outcome: "deleted".into(),
                     data: json!({"path": stage.source}),
@@ -437,9 +560,9 @@ impl EffectAdapter for FilesystemAdapter {
         effect: &Effect,
         staged: &StagedEffect,
         result: &AdapterResult,
-        _context: &AdapterContext,
+        context: &AdapterContext,
     ) -> Result<Vec<VerificationCheck>, AdapterError> {
-        let stage = self.decode_stage(effect, staged)?;
+        let stage = self.decode_stage(effect, staged, context)?;
         let mut checks = Vec::with_capacity(effect.expected_postconditions.len() + 1);
         let intrinsic = self.intrinsic_check(&stage)?;
         checks.push(VerificationCheck {
@@ -456,13 +579,14 @@ impl EffectAdapter for FilesystemAdapter {
         Ok(checks)
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn rollback(
         &self,
         effect: &Effect,
         staged: &StagedEffect,
-        _context: &AdapterContext,
+        context: &AdapterContext,
     ) -> Result<AdapterRecovery, AdapterError> {
-        let stage = self.decode_stage(effect, staged)?;
+        let stage = self.decode_stage(effect, staged, context)?;
         let source = normalized_relative_path(&stage.source)?;
         let stage_directory = normalized_internal_path(&stage.stage_directory)?;
         match stage.operation {
@@ -471,28 +595,81 @@ impl EffectAdapter for FilesystemAdapter {
                 details: json!({"operation": "read", "action": "none"}),
             }),
             FsOperation::Create => {
+                if !path_exists_nofollow(&self.directory, &source)? {
+                    return Ok(restored("created file was already absent"));
+                }
                 let current =
                     read_regular_file(&self.directory, &source, self.config.maximum_file_bytes)?;
                 require_digest(&current, stage.after_digest.as_deref(), "created file")?;
-                self.directory
-                    .remove_file(&source)
-                    .map_err(|error| fs_error("remove created file", &source, error))?;
+                let rolled_back = stage_directory.join("rolled-back-create");
+                move_noreplace_anchored(
+                    &self.directory,
+                    &source,
+                    &rolled_back,
+                    "capture created file for rollback",
+                )?;
+                if let Err(error) = verify_captured_file(
+                    &self.directory,
+                    &rolled_back,
+                    stage.after_digest.as_deref(),
+                    "captured created file",
+                    self.config.maximum_file_bytes,
+                ) {
+                    let _ = move_noreplace_anchored(
+                        &self.directory,
+                        &rolled_back,
+                        &source,
+                        "restore changed created file",
+                    );
+                    return Err(error);
+                }
                 Ok(restored("removed created file"))
             }
             FsOperation::Patch => {
                 let current =
                     read_regular_file(&self.directory, &source, self.config.maximum_file_bytes)?;
+                if stage.before_digest.as_deref() == Some(sha256(&current).as_str()) {
+                    return Ok(restored(
+                        "patch target already matched its original content",
+                    ));
+                }
                 require_digest(&current, stage.after_digest.as_deref(), "patched file")?;
                 let rolled_forward = stage_directory.join("rolled-forward");
-                self.directory
-                    .rename(&source, &self.directory, &rolled_forward)
-                    .map_err(|error| fs_error("preserve patched file", &source, error))?;
+                move_noreplace_anchored(
+                    &self.directory,
+                    &source,
+                    &rolled_forward,
+                    "preserve patched file",
+                )?;
+                if let Err(error) = verify_captured_file(
+                    &self.directory,
+                    &rolled_forward,
+                    stage.after_digest.as_deref(),
+                    "captured patched file",
+                    self.config.maximum_file_bytes,
+                ) {
+                    let _ = move_noreplace_anchored(
+                        &self.directory,
+                        &rolled_forward,
+                        &source,
+                        "restore changed patched file",
+                    );
+                    return Err(error);
+                }
                 let displaced = stage_directory.join("displaced");
-                if let Err(error) = self.directory.rename(&displaced, &self.directory, &source) {
-                    let _ = self
-                        .directory
-                        .rename(&rolled_forward, &self.directory, &source);
-                    return Err(fs_error("restore original file", &source, error));
+                if let Err(error) = move_noreplace_anchored(
+                    &self.directory,
+                    &displaced,
+                    &source,
+                    "restore original file",
+                ) {
+                    let _ = move_noreplace_anchored(
+                        &self.directory,
+                        &rolled_forward,
+                        &source,
+                        "restore failed rollback",
+                    );
+                    return Err(error);
                 }
                 Ok(restored("restored original file"))
             }
@@ -501,20 +678,91 @@ impl EffectAdapter for FilesystemAdapter {
                     normalized_relative_path(stage.destination.as_deref().ok_or_else(|| {
                         AdapterError::InvalidStage("move has no destination".into())
                     })?)?;
-                require_absent(&self.directory, &source)?;
+                if !path_exists_nofollow(&self.directory, &destination)? {
+                    if path_exists_nofollow(&self.directory, &source)? {
+                        let source_content = read_regular_file(
+                            &self.directory,
+                            &source,
+                            self.config.maximum_file_bytes,
+                        )?;
+                        require_digest(
+                            &source_content,
+                            stage.before_digest.as_deref(),
+                            "original move source",
+                        )?;
+                        return Ok(restored("move source was already at its original path"));
+                    }
+                    let moving = stage_directory.join("moving");
+                    verify_captured_file(
+                        &self.directory,
+                        &moving,
+                        stage.before_digest.as_deref(),
+                        "interrupted move source",
+                        self.config.maximum_file_bytes,
+                    )?;
+                    move_noreplace_anchored(
+                        &self.directory,
+                        &moving,
+                        &source,
+                        "restore interrupted move",
+                    )?;
+                    return Ok(restored("restored an interrupted move source"));
+                }
                 let current = read_regular_file(
                     &self.directory,
                     &destination,
                     self.config.maximum_file_bytes,
                 )?;
                 require_digest(&current, stage.after_digest.as_deref(), "moved file")?;
-                self.directory
-                    .rename(&destination, &self.directory, &source)
-                    .map_err(|error| fs_error("restore moved file", &source, error))?;
+                let moving = stage_directory.join("rollback-moving");
+                move_noreplace_anchored(
+                    &self.directory,
+                    &destination,
+                    &moving,
+                    "capture moved file for rollback",
+                )?;
+                if let Err(error) = verify_captured_file(
+                    &self.directory,
+                    &moving,
+                    stage.after_digest.as_deref(),
+                    "captured moved file",
+                    self.config.maximum_file_bytes,
+                ) {
+                    let _ = move_noreplace_anchored(
+                        &self.directory,
+                        &moving,
+                        &destination,
+                        "restore changed moved file",
+                    );
+                    return Err(error);
+                }
+                if let Err(error) =
+                    move_noreplace_anchored(&self.directory, &moving, &source, "restore moved file")
+                {
+                    let _ = move_noreplace_anchored(
+                        &self.directory,
+                        &moving,
+                        &destination,
+                        "restore failed move rollback",
+                    );
+                    return Err(error);
+                }
                 Ok(restored("moved file back to its original path"))
             }
             FsOperation::Delete => {
-                require_absent(&self.directory, &source)?;
+                if path_exists_nofollow(&self.directory, &source)? {
+                    let current = read_regular_file(
+                        &self.directory,
+                        &source,
+                        self.config.maximum_file_bytes,
+                    )?;
+                    require_digest(
+                        &current,
+                        stage.before_digest.as_deref(),
+                        "original delete source",
+                    )?;
+                    return Ok(restored("deleted file was already at its original path"));
+                }
                 let deleted = stage_directory.join("deleted");
                 let deleted_content =
                     read_regular_file(&self.directory, &deleted, self.config.maximum_file_bytes)?;
@@ -523,9 +771,12 @@ impl EffectAdapter for FilesystemAdapter {
                     stage.before_digest.as_deref(),
                     "staged deletion",
                 )?;
-                self.directory
-                    .rename(&deleted, &self.directory, &source)
-                    .map_err(|error| fs_error("restore deleted file", &source, error))?;
+                move_noreplace_anchored(
+                    &self.directory,
+                    &deleted,
+                    &source,
+                    "restore deleted file",
+                )?;
                 Ok(restored("restored deleted file"))
             }
         }
@@ -550,10 +801,7 @@ impl FilesystemAdapter {
                     normalized_relative_path(stage.destination.as_deref().ok_or_else(|| {
                         AdapterError::InvalidStage("move has no destination".into())
                     })?)?;
-                let source_absent = !self
-                    .directory
-                    .try_exists(&source)
-                    .map_err(|error| fs_error("check moved source", &source, error))?;
+                let source_absent = !path_exists_nofollow(&self.directory, &source)?;
                 let destination_content = read_regular_file(
                     &self.directory,
                     &destination,
@@ -566,10 +814,7 @@ impl FilesystemAdapter {
                 ))
             }
             FsOperation::Delete => Ok((
-                !self
-                    .directory
-                    .try_exists(&source)
-                    .map_err(|error| fs_error("check deleted path", &source, error))?,
+                !path_exists_nofollow(&self.directory, &source)?,
                 "deleted path absence checked".into(),
             )),
         }
@@ -583,10 +828,7 @@ impl FilesystemAdapter {
         let (passed, message) = match condition {
             Condition::FileExists { path, expected } => {
                 let path = normalized_relative_path(path)?;
-                let actual = self
-                    .directory
-                    .try_exists(&path)
-                    .map_err(|error| fs_error("check file existence", &path, error))?;
+                let actual = path_exists_nofollow(&self.directory, &path)?;
                 (actual == *expected, format!("existence was {actual}"))
             }
             Condition::FileSha256 { path, digest } => {
@@ -672,40 +914,16 @@ struct FsStage {
 }
 
 fn ensure_internal_directory(directory: &Dir) -> Result<(), AdapterError> {
-    if let Ok(metadata) = directory.symlink_metadata(INTERNAL_DIRECTORY)
-        && (metadata.file_type().is_symlink() || !metadata.is_dir())
-    {
-        return Err(AdapterError::Containment(
-            "reserved internal workspace path is not a real directory".into(),
-        ));
-    }
-    directory
-        .create_dir_all(STAGING_DIRECTORY)
-        .map_err(|source| AdapterError::Filesystem {
-            operation: "create staging directory",
-            path: STAGING_DIRECTORY.into(),
-            source,
-        })?;
-    for path in [INTERNAL_DIRECTORY, STAGING_DIRECTORY] {
-        let metadata =
-            directory
-                .symlink_metadata(path)
-                .map_err(|source| AdapterError::Filesystem {
-                    operation: "inspect staging directory",
-                    path: path.into(),
-                    source,
-                })?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(AdapterError::Containment(
-                "staging path contains a symlink or non-directory".into(),
-            ));
-        }
-    }
+    let _ = open_or_create_directory_nofollow(directory, Path::new(STAGING_DIRECTORY))?;
     Ok(())
 }
 
 fn normalized_relative_path(value: &str) -> Result<PathBuf, AdapterError> {
-    if value.is_empty() || value.contains('\\') || value.as_bytes().contains(&0) {
+    if value.is_empty()
+        || value.contains('\\')
+        || value.contains(':')
+        || value.as_bytes().contains(&0)
+    {
         return Err(AdapterError::Containment(
             "path must use non-empty forward-slash relative syntax".into(),
         ));
@@ -714,7 +932,12 @@ fn normalized_relative_path(value: &str) -> Result<PathBuf, AdapterError> {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
-            Component::Normal(value) => normalized.push(value),
+            Component::Normal(value) if is_portable_component(value) => normalized.push(value),
+            Component::Normal(_) => {
+                return Err(AdapterError::Containment(
+                    "path contains a reserved or platform-ambiguous component".into(),
+                ));
+            }
             Component::CurDir
             | Component::ParentDir
             | Component::RootDir
@@ -726,16 +949,47 @@ fn normalized_relative_path(value: &str) -> Result<PathBuf, AdapterError> {
         }
     }
     if normalized.as_os_str().is_empty()
-        || normalized
-            .components()
-            .next()
-            .is_some_and(|component| component.as_os_str() == INTERNAL_DIRECTORY)
+        || normalized.components().next().is_some_and(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .is_some_and(|value| value.eq_ignore_ascii_case(INTERNAL_DIRECTORY))
+        })
     {
         return Err(AdapterError::Containment(
             "path targets Veyra's reserved internal directory".into(),
         ));
     }
     Ok(normalized)
+}
+
+fn is_portable_component(component: &std::ffi::OsStr) -> bool {
+    let Some(component) = component.to_str() else {
+        return false;
+    };
+    if component.ends_with('.') || component.ends_with(' ') {
+        return false;
+    }
+    let stem = component.split('.').next().unwrap_or_default();
+    let upper = stem.to_ascii_uppercase();
+    !matches!(
+        upper.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "CONIN$"
+            | "CONOUT$"
+            | "CLOCK$"
+            | "COM¹"
+            | "COM²"
+            | "COM³"
+            | "LPT¹"
+            | "LPT²"
+            | "LPT³"
+    ) && !(upper.len() == 4
+        && (upper.starts_with("COM") || upper.starts_with("LPT"))
+        && matches!(upper.as_bytes()[3], b'1'..=b'9'))
 }
 
 fn normalized_internal_path(value: &str) -> Result<PathBuf, AdapterError> {
@@ -755,55 +1009,34 @@ fn normalized_internal_path(value: &str) -> Result<PathBuf, AdapterError> {
     Ok(path.to_path_buf())
 }
 
-fn reject_symlink_components(directory: &Dir, path: &Path) -> Result<(), AdapterError> {
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component);
-        match directory.symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(AdapterError::Containment(format!(
-                    "symlink component `{}` is not accepted",
-                    display_relative(&current)
-                )));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-            Err(error) => return Err(fs_error("inspect path component", &current, error)),
-        }
-    }
-    Ok(())
-}
-
 fn require_existing_parent(directory: &Dir, path: &Path) -> Result<(), AdapterError> {
-    reject_symlink_components(directory, path)?;
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    directory
-        .open_dir(parent)
-        .map_err(|error| fs_error("open parent directory", parent, error))?;
+    let _ = open_parent_nofollow(directory, path)?;
     Ok(())
 }
 
 fn require_absent(directory: &Dir, path: &Path) -> Result<(), AdapterError> {
-    reject_symlink_components(directory, path)?;
-    if directory
-        .try_exists(path)
-        .map_err(|error| fs_error("check path absence", path, error))?
-    {
-        Err(AdapterError::Precondition(format!(
+    let (parent, name) = open_parent_nofollow(directory, path)?;
+    match parent.symlink_metadata(name) {
+        Ok(_) => Err(AdapterError::Precondition(format!(
             "`{}` already exists",
             display_relative(path)
-        )))
-    } else {
-        Ok(())
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(fs_error("check path absence", path, error)),
     }
 }
 
 fn read_regular_file(directory: &Dir, path: &Path, limit: usize) -> Result<Vec<u8>, AdapterError> {
-    reject_symlink_components(directory, path)?;
-    let metadata = directory
-        .symlink_metadata(path)
-        .map_err(|error| fs_error("inspect regular file", path, error))?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
+    let (parent, name) = open_parent_nofollow(directory, path)?;
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = parent
+        .open_with(name, &options)
+        .map_err(|error| fs_error("open regular file without following links", path, error))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| fs_error("inspect opened regular file", path, error))?;
+    if !metadata.is_file() {
         return Err(AdapterError::Precondition(format!(
             "`{}` is not a regular file",
             display_relative(path)
@@ -815,9 +1048,6 @@ fn read_regular_file(directory: &Dir, path: &Path, limit: usize) -> Result<Vec<u
             limit,
         });
     }
-    let file = directory
-        .open(path)
-        .map_err(|error| fs_error("open regular file", path, error))?;
     let mut content =
         Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(limit).min(limit));
     file.take(u64::try_from(limit).unwrap_or(u64::MAX) + 1)
@@ -833,10 +1063,14 @@ fn read_regular_file(directory: &Dir, path: &Path, limit: usize) -> Result<Vec<u
 }
 
 fn write_new(directory: &Dir, path: &Path, content: &[u8]) -> Result<(), AdapterError> {
+    let (parent, name) = open_parent_nofollow(directory, path)?;
     let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    let mut file = directory
-        .open_with(path, &options)
+    options
+        .write(true)
+        .create_new(true)
+        .follow(FollowSymlinks::No);
+    let mut file = parent
+        .open_with(name, &options)
         .map_err(|error| fs_error("create staged file", path, error))?;
     file.write_all(content)
         .map_err(|error| fs_error("write staged file", path, error))?;
@@ -844,16 +1078,157 @@ fn write_new(directory: &Dir, path: &Path, content: &[u8]) -> Result<(), Adapter
         .map_err(|error| fs_error("sync staged file", path, error))
 }
 
+/// Move a regular file without ever replacing an existing destination.
+///
+/// The hard-link creation is the atomic no-clobber point. Staging lives below
+/// the same capability root, so source and destination are on one filesystem.
+/// If unlinking the source fails, both names may remain and the caller receives
+/// an error for conservative recovery; an existing destination is never lost.
+fn move_noreplace_anchored(
+    directory: &Dir,
+    source: &Path,
+    destination: &Path,
+    operation: &'static str,
+) -> Result<(), AdapterError> {
+    let (source_parent, source_name) = open_parent_nofollow(directory, source)?;
+    let (destination_parent, destination_name) = open_parent_nofollow(directory, destination)?;
+    let metadata = source_parent
+        .symlink_metadata(source_name)
+        .map_err(|error| fs_error("inspect no-replace move source", source, error))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(AdapterError::Precondition(format!(
+            "`{}` is not a regular, non-symlink file",
+            display_relative(source)
+        )));
+    }
+    source_parent
+        .hard_link(source_name, &destination_parent, destination_name)
+        .map_err(|error| fs_error(operation, destination, error))?;
+    source_parent
+        .remove_file(source_name)
+        .map_err(|error| fs_error(operation, source, error))
+}
+
+fn path_exists_nofollow(directory: &Dir, path: &Path) -> Result<bool, AdapterError> {
+    let (parent, name) = match open_parent_nofollow(directory, path) {
+        Ok(opened) => opened,
+        Err(AdapterError::Filesystem { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    };
+    match parent.symlink_metadata(name) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err(AdapterError::Containment(format!(
+                "symlink component `{}` is not accepted",
+                display_relative(path)
+            )))
+        }
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(fs_error("check path existence", path, error)),
+    }
+}
+
 fn create_unique_stage_directory(directory: &Dir, path: &Path) -> Result<(), AdapterError> {
     let parent = path
         .parent()
         .ok_or_else(|| AdapterError::InvalidStage("stage directory has no parent".into()))?;
-    directory
-        .create_dir_all(parent)
-        .map_err(|error| fs_error("create stage parent", parent, error))?;
-    directory
-        .create_dir(path)
+    let parent_directory = open_or_create_directory_nofollow(directory, parent)?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| AdapterError::InvalidStage("stage directory has no name".into()))?;
+    parent_directory
+        .create_dir(name)
         .map_err(|error| fs_error("create unique stage", path, error))
+}
+
+fn open_parent_nofollow<'a>(
+    directory: &Dir,
+    path: &'a Path,
+) -> Result<(Dir, &'a std::ffi::OsStr), AdapterError> {
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let name = path
+        .file_name()
+        .ok_or_else(|| AdapterError::Containment("path has no final component".into()))?;
+    Ok((open_directory_nofollow(directory, parent)?, name))
+}
+
+fn open_directory_nofollow(directory: &Dir, path: &Path) -> Result<Dir, AdapterError> {
+    let mut opened = directory
+        .try_clone()
+        .map_err(|error| fs_error("clone capability directory", path, error))?;
+    let mut traversed = PathBuf::new();
+    for component in path.components() {
+        let Component::Normal(name) = component else {
+            return Err(AdapterError::Containment(
+                "directory path contains a non-normal component".into(),
+            ));
+        };
+        traversed.push(name);
+        opened = opened.open_dir_nofollow(name).map_err(|error| {
+            if opened
+                .symlink_metadata(name)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                AdapterError::Containment(format!(
+                    "symlink component `{}` is not accepted",
+                    display_relative(&traversed)
+                ))
+            } else {
+                fs_error("open directory component", &traversed, error)
+            }
+        })?;
+    }
+    Ok(opened)
+}
+
+fn open_or_create_directory_nofollow(directory: &Dir, path: &Path) -> Result<Dir, AdapterError> {
+    let mut opened = directory
+        .try_clone()
+        .map_err(|error| fs_error("clone capability directory", path, error))?;
+    let mut traversed = PathBuf::new();
+    for component in path.components() {
+        let Component::Normal(name) = component else {
+            return Err(AdapterError::Containment(
+                "directory path contains a non-normal component".into(),
+            ));
+        };
+        traversed.push(name);
+        match opened.open_dir_nofollow(name) {
+            Ok(next) => opened = next,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match opened.create_dir(name) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => {
+                        return Err(fs_error("create directory component", &traversed, error));
+                    }
+                }
+                opened = opened.open_dir_nofollow(name).map_err(|error| {
+                    fs_error("open created directory component", &traversed, error)
+                })?;
+            }
+            Err(error) => {
+                return Err(
+                    if opened
+                        .symlink_metadata(name)
+                        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                    {
+                        AdapterError::Containment(format!(
+                            "symlink component `{}` is not accepted",
+                            display_relative(&traversed)
+                        ))
+                    } else {
+                        fs_error("open directory component", &traversed, error)
+                    },
+                );
+            }
+        }
+    }
+    Ok(opened)
 }
 
 fn stage_directory(
@@ -891,6 +1266,17 @@ fn require_digest(
             "{subject} digest no longer matches staged evidence"
         )))
     }
+}
+
+fn verify_captured_file(
+    directory: &Dir,
+    path: &Path,
+    expected: Option<&str>,
+    subject: &str,
+    limit: usize,
+) -> Result<(), AdapterError> {
+    let content = read_regular_file(directory, path, limit)?;
+    require_digest(&content, expected, subject)
 }
 
 fn bounded_diff(before: &[u8], after: &[u8], path: &str, limit: usize) -> Option<String> {
@@ -1057,6 +1443,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rollback_recognizes_staged_but_unexecuted_filesystem_effects() {
+        let (temp, adapter) = adapter();
+        let context = context();
+
+        let (create, create_stage) = preflight_and_stage(
+            &adapter,
+            effect("create", &["notes/new.txt"], Some("new")),
+            &context,
+        )
+        .await;
+        assert!(
+            adapter
+                .rollback(&create, &create_stage, &context)
+                .await
+                .unwrap()
+                .restored
+        );
+
+        std::fs::write(temp.path().join("notes/patch.txt"), "before").unwrap();
+        let (patch, patch_stage) = preflight_and_stage(
+            &adapter,
+            effect("patch", &["notes/patch.txt"], Some("after")),
+            &context,
+        )
+        .await;
+        assert!(
+            adapter
+                .rollback(&patch, &patch_stage, &context)
+                .await
+                .unwrap()
+                .restored
+        );
+
+        std::fs::write(temp.path().join("notes/source.txt"), "move").unwrap();
+        let (moving, move_stage) = preflight_and_stage(
+            &adapter,
+            effect("move", &["notes/source.txt", "notes/destination.txt"], None),
+            &context,
+        )
+        .await;
+        assert!(
+            adapter
+                .rollback(&moving, &move_stage, &context)
+                .await
+                .unwrap()
+                .restored
+        );
+
+        std::fs::write(temp.path().join("notes/delete.txt"), "delete").unwrap();
+        let (delete, delete_stage) = preflight_and_stage(
+            &adapter,
+            effect("delete", &["notes/delete.txt"], None),
+            &context,
+        )
+        .await;
+        assert!(
+            adapter
+                .rollback(&delete, &delete_stage, &context)
+                .await
+                .unwrap()
+                .restored
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("notes/patch.txt")).unwrap(),
+            "before"
+        );
+        assert!(temp.path().join("notes/source.txt").exists());
+        assert!(!temp.path().join("notes/destination.txt").exists());
+        assert!(temp.path().join("notes/delete.txt").exists());
+    }
+
+    #[tokio::test]
     async fn mutation_after_preview_is_rejected_before_stage() {
         let (temp, adapter) = adapter();
         std::fs::write(temp.path().join("notes/file.txt"), "one").unwrap();
@@ -1068,6 +1526,78 @@ mod tests {
             adapter.stage(&effect, &context).await,
             Err(AdapterError::Toctou(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn destination_created_after_staging_is_never_clobbered() {
+        let (temp, adapter) = adapter();
+        let context = context();
+        let effect = effect("create", &["notes/file.txt"], Some("veyra"));
+        let (effect, staged) = preflight_and_stage(&adapter, effect, &context).await;
+        std::fs::write(temp.path().join("notes/file.txt"), "concurrent writer").unwrap();
+
+        assert!(adapter.execute(&effect, &staged, &context).await.is_err());
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("notes/file.txt")).unwrap(),
+            "concurrent writer"
+        );
+    }
+
+    #[tokio::test]
+    async fn staged_prepared_bytes_are_rechecked_before_commit() {
+        let (temp, adapter) = adapter();
+        let context = context();
+        let effect = effect("create", &["notes/prepared.txt"], Some("approved"));
+        let (effect, staged) = preflight_and_stage(&adapter, effect, &context).await;
+        let details: FsStage = serde_json::from_value(staged.data.clone()).unwrap();
+        std::fs::write(
+            temp.path().join(details.stage_directory).join("prepared"),
+            "tampered",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            adapter.execute(&effect, &staged, &context).await,
+            Err(AdapterError::Toctou(_))
+        ));
+        assert!(!temp.path().join("notes/prepared.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn staging_artifact_collision_never_clobbers_either_file() {
+        let (temp, adapter) = adapter();
+        std::fs::write(temp.path().join("notes/file.txt"), "original").unwrap();
+        let context = context();
+        let effect = effect("patch", &["notes/file.txt"], Some("approved"));
+        let (effect, staged) = preflight_and_stage(&adapter, effect, &context).await;
+        let details: FsStage = serde_json::from_value(staged.data.clone()).unwrap();
+        let collision = temp.path().join(details.stage_directory).join("displaced");
+        std::fs::write(&collision, "unrelated staging file").unwrap();
+
+        assert!(adapter.execute(&effect, &staged, &context).await.is_err());
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("notes/file.txt")).unwrap(),
+            "original"
+        );
+        assert_eq!(
+            std::fs::read_to_string(collision).unwrap(),
+            "unrelated staging file"
+        );
+    }
+
+    #[tokio::test]
+    async fn staged_filesystem_details_are_bound_to_the_transaction_and_preview() {
+        let (temp, adapter) = adapter();
+        let context = context();
+        let effect = effect("create", &["notes/file.txt"], Some("veyra"));
+        let (effect, mut staged) = preflight_and_stage(&adapter, effect, &context).await;
+        staged.data["stage_directory"] = json!(".veyra/staging/other-transaction/other-effect");
+
+        assert!(matches!(
+            adapter.execute(&effect, &staged, &context).await,
+            Err(AdapterError::InvalidStage(_))
+        ));
+        assert!(!temp.path().join("notes/file.txt").exists());
     }
 
     #[tokio::test]
@@ -1095,10 +1625,27 @@ mod tests {
             "../outside",
             "/absolute",
             ".veyra/journal.db",
+            ".VEYRA/journal.db",
             "safe\\..\\outside",
+            "notes/file.txt:stream",
+            "notes/NUL.txt",
+            "notes/trailing.",
         ] {
             assert!(adapter.paths(&effect("read", &[path], None)).is_err());
         }
+    }
+
+    #[test]
+    fn unsupported_capability_caveats_fail_closed() {
+        let (_temp, adapter) = adapter();
+        let mut candidate = effect("read", &["notes/file.txt"], None);
+        candidate.required_capabilities[0]
+            .constraints
+            .insert("region".into(), "us-east".into());
+        assert!(matches!(
+            adapter.validate(&candidate),
+            Err(AdapterError::InvalidEffect(_))
+        ));
     }
 
     #[cfg(unix)]
@@ -1114,6 +1661,24 @@ mod tests {
         assert!(matches!(
             adapter
                 .preflight(&effect("read", &["link/secret"], None), &context)
+                .await,
+            Err(AdapterError::Containment(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn directory_symlinks_are_rejected_even_when_the_target_is_inside() {
+        use std::os::unix::fs::symlink;
+
+        let (temp, adapter) = adapter();
+        std::fs::create_dir(temp.path().join("actual")).unwrap();
+        std::fs::write(temp.path().join("actual/file"), "inside").unwrap();
+        symlink(temp.path().join("actual"), temp.path().join("alias")).unwrap();
+
+        assert!(matches!(
+            adapter
+                .preflight(&effect("read", &["alias/file"], None), &context())
                 .await,
             Err(AdapterError::Containment(_))
         ));

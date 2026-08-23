@@ -1,0 +1,579 @@
+{
+  "schema_version": "veyra.eval-results/v1",
+  "started_at": "2026-08-23T14:10:35.146Z",
+  "completed_at": "2026-08-23T14:11:30.746Z",
+  "environment": {
+    "platform": "win32",
+    "architecture": "x64",
+    "rust_toolchain": "stable-x86_64-pc-windows-gnu",
+    "node": "v24.14.1"
+  },
+  "summary": {
+    "total": 39,
+    "passed": 38,
+    "environment_limited": 1,
+    "failed": 0
+  },
+  "gates": {
+    "rust": {
+      "exit_code": 0,
+      "duration_ms": 42093
+    },
+    "typescript": {
+      "exit_code": 0,
+      "duration_ms": 7231
+    },
+    "demo": {
+      "exit_code": 0,
+      "duration_ms": 6273
+    }
+  },
+  "results": [
+    {
+      "id": "EV-001",
+      "category": "safe_success",
+      "title": "Filesystem transaction commits with verified postconditions",
+      "expected": "committed_then_rolled_back",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "full_filesystem_flow_commits_and_rolls_back",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-002",
+      "category": "denial",
+      "title": "An effect without capability never executes",
+      "expected": "denied",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "no_effect_executes_without_capability",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-003",
+      "category": "prompt_injection",
+      "title": "Injected authority claims remain untrusted text",
+      "expected": "denied",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "prompt_injection_text_never_creates_tool_authority",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-004",
+      "category": "confused_deputy",
+      "title": "An agent cannot approve its own effect",
+      "expected": "authority_error",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "agent_cannot_approve_its_own_effect",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-005",
+      "category": "capability",
+      "title": "Policy denies by default and requires exact live scope",
+      "expected": "exact_scope_only",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "deny_by_default_and_allow_with_exact_live_capability",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-006",
+      "category": "capability_escalation",
+      "title": "Filesystem scope matching is component-aware",
+      "expected": "sibling_denied",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "path_prefix_is_component_aware",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-007",
+      "category": "path_traversal",
+      "title": "Traversal and internal staging paths are rejected",
+      "expected": "containment_error",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "traversal_and_reserved_paths_are_rejected",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-008",
+      "category": "symlink_escape",
+      "title": "Symlink escape cannot leave a workspace",
+      "expected": "containment_error",
+      "status": "environment_limited",
+      "environment_limitation": "The adversarial symlink fixture is Unix-only because unprivileged Windows symlink creation requires Developer Mode or elevation; lexical traversal and cap-std containment tests still run on Windows.",
+      "evidence": {
+        "gate": "rust",
+        "probe": "symlink_escape_is_rejected",
+        "probe_observed": false,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-009",
+      "category": "toctou",
+      "title": "Mutation after preview is rejected before staging",
+      "expected": "state_changed",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "mutation_after_preview_is_rejected_before_stage",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-010",
+      "category": "approval_mutation",
+      "title": "Approval digest rejects mutated effect content",
+      "expected": "digest_mismatch",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "approval_rejects_mutated_effect_and_replay",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-011",
+      "category": "approval_replay",
+      "title": "Approval nonce cannot authorize twice",
+      "expected": "approval_replay",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "approval_nonce_is_single_use",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-012",
+      "category": "receipt_forgery",
+      "title": "Modified receipt authentication fails",
+      "expected": "forged_receipt",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "forged_or_modified_receipts_are_rejected",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-013",
+      "category": "journal_tamper",
+      "title": "Corrupt and missing journal links are detected",
+      "expected": "invalid_chain",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "chain_detects_payload_tampering_and_missing_links",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-014",
+      "category": "secret_leakage",
+      "title": "Nested sensitive audit fields are redacted",
+      "expected": "redacted_export",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "audit_payloads_redact_nested_secrets",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-015",
+      "category": "idempotency",
+      "title": "A completed idempotency key returns its original receipt",
+      "expected": "no_duplicate",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "duplicate_idempotency_returns_original_receipt",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-016",
+      "category": "concurrency",
+      "title": "Concurrent reservations have one winner",
+      "expected": "one_acquired",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "concurrent_idempotency_reservation_has_exactly_one_winner",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-017",
+      "category": "concurrency",
+      "title": "Concurrent transaction runs cross the boundary once",
+      "expected": "one_execution",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "concurrent_run_requests_cross_the_effect_boundary_once",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-018",
+      "category": "crash_recovery",
+      "title": "Every nonterminal phase has a conservative restart class",
+      "expected": "classified",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "restart_classification_is_conservative_at_every_recoverable_phase",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-019",
+      "category": "crash_recovery",
+      "title": "Durable executing state reopens as manual recovery",
+      "expected": "manual_recovery",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "durable_reopen_preserves_chain_and_marks_in_flight_execution_manual",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-020",
+      "category": "rollback",
+      "title": "Supported filesystem state is restored",
+      "expected": "restored",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "create_verify_and_rollback_round_trip",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-021",
+      "category": "partial_compensation",
+      "title": "Later human work is not clobbered by rollback",
+      "expected": "partially_compensated",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "rollback_reports_partial_compensation_instead_of_clobbering_later_work",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-022",
+      "category": "malicious_adapter",
+      "title": "Outcome text cannot spoof terminal state",
+      "expected": "malformed_result_rejected",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "adapter_result_outcome_cannot_spoof_terminal_output",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-023",
+      "category": "http_ssrf",
+      "title": "Private network destinations require explicit opt-in",
+      "expected": "private_denied",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "private_addresses_are_denied_unless_rule_explicitly_opts_in",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-024",
+      "category": "http_policy",
+      "title": "HTTP domain, method, and sensitive query are constrained",
+      "expected": "policy_denied",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "domain_method_and_sensitive_query_are_denied",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-025",
+      "category": "process_policy",
+      "title": "Process execution is disabled by default",
+      "expected": "disabled",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "process_is_disabled_by_default_configuration",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-026",
+      "category": "process_policy",
+      "title": "Safe process demo uses exact argv without a shell",
+      "expected": "exit_0_irreversible",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "safe_demo_runs_one_exact_argv_without_a_shell",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-027",
+      "category": "schema",
+      "title": "Unknown effect fields fail strict deserialization",
+      "expected": "schema_rejected",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "unknown_effect_fields_are_rejected",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-028",
+      "category": "sdk",
+      "title": "SDK enforces loopback and does not leak auth in errors",
+      "expected": "typed_client_pass",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "typescript",
+        "probe": null,
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-029",
+      "category": "desktop",
+      "title": "Desktop has explicit connected and empty states",
+      "expected": "ui_smoke_pass",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "typescript",
+        "probe": null,
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-030",
+      "category": "vertical_slice",
+      "title": "No-key CLI demo commits and rolls back over the API",
+      "expected": "committed_audited_rolled_back",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "demo",
+        "probe": null,
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-031",
+      "category": "toctou",
+      "title": "A destination created after staging is not overwritten",
+      "expected": "concurrent_writer_preserved",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "destination_created_after_staging_is_never_clobbered",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-032",
+      "category": "malicious_adapter",
+      "title": "Malformed and oversized stage descriptors are rejected",
+      "expected": "stage_rejected",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "malformed_or_oversized_stage_descriptors_are_rejected",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-033",
+      "category": "malicious_adapter",
+      "title": "Incomplete verification cannot produce a commit",
+      "expected": "rolled_back",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "malformed_verification_triggers_rollback_instead_of_commit",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-034",
+      "category": "model_output",
+      "title": "Planner provider responses are bounded while streaming",
+      "expected": "size_limit",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "provider_response_chunks_are_bounded_before_allocation_growth",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-035",
+      "category": "secret_leakage",
+      "title": "HTTP-reflected secret bytes are redacted from persisted results",
+      "expected": "redacted_result",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "reflected_secret_bytes_are_removed_from_headers_and_bodies",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-036",
+      "category": "http_ssrf",
+      "title": "Mapped and special-use addresses are not treated as public",
+      "expected": "special_addresses_denied",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "mapped_and_reserved_addresses_are_not_public",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-037",
+      "category": "journal_tamper",
+      "title": "Transaction JSON must match its indexed state",
+      "expected": "corruption_detected",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "transaction_snapshot_must_match_its_indexed_state",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-038",
+      "category": "retry_policy",
+      "title": "Automatic retries and unenforceable constraints fail closed",
+      "expected": "policy_denied",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "unsupported_retries_and_unenforceable_constraints_are_denied",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    },
+    {
+      "id": "EV-039",
+      "category": "http_bounds",
+      "title": "Oversized response headers are rejected before persistence",
+      "expected": "size_limit",
+      "status": "passed",
+      "environment_limitation": null,
+      "evidence": {
+        "gate": "rust",
+        "probe": "response_headers_are_bounded_before_receipt_persistence",
+        "probe_observed": true,
+        "command_exit_code": 0
+      }
+    }
+  ]
+}

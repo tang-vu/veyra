@@ -16,6 +16,7 @@
     "lint": "pnpm -r lint",
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
+    "eval": "node ./evals/run.mjs",
     "desktop:dev": "pnpm --filter @veyra/desktop tauri dev",
     "desktop:build": "pnpm --filter @veyra/desktop tauri build"
   },
