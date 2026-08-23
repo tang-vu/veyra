@@ -19,7 +19,10 @@ execution boundary take priority over adapter count.
 - OS keychain integration and stronger local token lifecycle
 - Per-client agent/operator credentials and cryptographic human approval identity
 - Policy-driven retention and garbage collection for durable filesystem staging artifacts
-- Paginated transaction, bundle, and audit APIs for long-lived journals
+- Cursor pagination/streaming for the remaining per-transaction bundle path and high-volume audit
+  verification; transaction, audit-event/export, and recovery list pages are implemented
+- A versioned precondition-evaluation contract; V0.1 deliberately rejects non-empty preconditions
+- An authenticated audit anchor outside SQLite or optional remote transparency sink
 - First-class MCP interception example and A2A receipt exchange example
 - Broader Windows reparse-point and network-filesystem adversarial testing
 - Native no-replace rename support for filesystems that do not provide regular-file hard links

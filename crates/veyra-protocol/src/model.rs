@@ -124,7 +124,8 @@ pub struct Effect {
     pub inputs: EffectInputs,
     /// Exact resource affected.
     pub resource: ResourceScope,
-    /// Preconditions rechecked immediately before execution.
+    /// Reserved preconditions. The V0.1 kernel rejects non-empty values until an explicit
+    /// adapter evaluation contract is available.
     pub preconditions: Vec<Condition>,
     /// Postconditions required for a committed transaction.
     pub expected_postconditions: Vec<Condition>,
@@ -202,7 +203,10 @@ pub enum ResourceScope {
     },
 }
 
-/// A typed condition evaluated before or after execution.
+/// A typed condition vocabulary reserved for preconditions and evaluated for postconditions.
+///
+/// The V0.1 kernel rejects non-empty precondition lists until adapters have a versioned evaluation
+/// contract; supported postconditions are still evaluated after execution.
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Condition {
@@ -299,6 +303,8 @@ pub enum Preview {
     Process {
         /// Exact executable.
         executable: String,
+        /// SHA-256 of the executable bytes observed during preflight.
+        executable_sha256: String,
         /// Exact argument vector.
         args: Vec<String>,
         /// Exact working directory.

@@ -217,6 +217,12 @@ pre {
   color: var(--green);
 }
 
+.integrity.invalid {
+  border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+  background: var(--red-soft);
+  color: var(--red);
+}
+
 .integrity span {
   font-weight: 700;
 }
@@ -440,6 +446,26 @@ pre {
   color: var(--text-faint);
   font-family: var(--mono);
   font-size: 9px;
+}
+
+.transaction-list .pagination-button,
+.audit-mini-list .pagination-button {
+  width: calc(100% - 8px);
+  min-height: 34px;
+  margin: 8px 4px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.transaction-list .pagination-button:hover:not(:disabled),
+.audit-mini-list .pagination-button:hover:not(:disabled) {
+  border-style: solid;
+  color: var(--text);
 }
 
 .intent-composer {

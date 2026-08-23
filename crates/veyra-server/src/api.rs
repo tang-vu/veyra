@@ -1,6 +1,6 @@
 //! Authenticated versioned loopback API.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, fmt::Write as _, sync::Arc};
 
 use axum::{
     Json, Router,
@@ -22,7 +22,7 @@ use tower_http::{
 use veyra_core::{
     ApprovalOutcome, Kernel, KernelError, PreviewOutcome, RollbackOutcome, RunOutcome, Submission,
 };
-use veyra_journal::{JournalError, RecoveryRecord};
+use veyra_journal::{JournalError, JournalPage, RecoveryRecord};
 use veyra_protocol::{
     ApprovalGrant, ApprovalRequest, AuditEvent, AuditVerification, Capability, CapabilityId,
     Compensation, Execution, Intent, IntentId, PROTOCOL_VERSION, Plan, PlanId, PolicyDecision,
@@ -73,6 +73,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/intents/{id}", get(get_intent))
         .route("/v1/plans/{id}", get(get_plan))
         .route("/v1/transactions", get(list_transactions))
+        .route("/v1/transactions/page", get(list_transaction_page))
         .route("/v1/transactions/{id}", get(get_transaction))
         .route("/v1/transactions/{id}/bundle", get(get_transaction_bundle))
         .route("/v1/transactions/{id}/preview", post(preview_transaction))
@@ -82,9 +83,11 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/capabilities", post(issue_capability))
         .route("/v1/capabilities/{id}/revoke", post(revoke_capability))
         .route("/v1/audit/events", get(audit_events))
+        .route("/v1/audit/events/page", get(audit_event_page))
         .route("/v1/audit/export", get(audit_export))
         .route("/v1/audit/verify", get(audit_verify))
         .route("/v1/recovery", get(recovery_actions))
+        .route("/v1/recovery/page", get(recovery_action_page))
         .route("/v1/demo/seed", post(seed_demo))
         .route_layer(middleware::from_fn_with_state(state.clone(), authenticate))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024))
@@ -167,8 +170,55 @@ async fn get_plan(
 
 async fn list_transactions(
     State(state): State<ApiState>,
+    Query(query): Query<PageQuery>,
 ) -> Result<Json<Vec<Transaction>>, ApiError> {
-    Ok(Json(state.kernel.journal().transactions()?))
+    let limit = page_limit(query.limit, 100, 500)?;
+    Ok(Json(
+        state
+            .kernel
+            .journal()
+            .transaction_page(limit, query.cursor.as_deref())?
+            .items,
+    ))
+}
+
+/// A bounded page with an opaque keyset cursor.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ApiPage<T> {
+    /// Values in stable endpoint order.
+    pub items: Vec<T>,
+    /// Opaque cursor for the next page, absent at the end.
+    pub next_cursor: Option<String>,
+}
+
+impl<T> From<JournalPage<T>> for ApiPage<T> {
+    fn from(page: JournalPage<T>) -> Self {
+        Self {
+            items: page.items,
+            next_cursor: page.next_cursor,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct PageQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+async fn list_transaction_page(
+    State(state): State<ApiState>,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<ApiPage<Transaction>>, ApiError> {
+    let limit = page_limit(query.limit, 100, 500)?;
+    Ok(Json(
+        state
+            .kernel
+            .journal()
+            .transaction_page(limit, query.cursor.as_deref())?
+            .into(),
+    ))
 }
 
 async fn get_transaction(
@@ -280,16 +330,38 @@ async fn revoke_capability(
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 struct AuditQuery {
     transaction_id: Option<TransactionId>,
+    limit: Option<usize>,
+    cursor: Option<String>,
 }
 
 async fn audit_events(
     State(state): State<ApiState>,
     Query(query): Query<AuditQuery>,
 ) -> Result<Json<Vec<AuditEvent>>, ApiError> {
+    let limit = page_limit(query.limit, 200, 1_000)?;
     Ok(Json(
-        state.kernel.journal().export_events(query.transaction_id)?,
+        state
+            .kernel
+            .journal()
+            .recent_audit_event_page(query.transaction_id, limit, query.cursor.as_deref())?
+            .items,
+    ))
+}
+
+async fn audit_event_page(
+    State(state): State<ApiState>,
+    Query(query): Query<AuditQuery>,
+) -> Result<Json<ApiPage<AuditEvent>>, ApiError> {
+    let limit = page_limit(query.limit, 200, 1_000)?;
+    Ok(Json(
+        state
+            .kernel
+            .journal()
+            .recent_audit_event_page(query.transaction_id, limit, query.cursor.as_deref())?
+            .into(),
     ))
 }
 
@@ -300,15 +372,24 @@ pub struct AuditTextExport {
     pub transaction_id: Option<TransactionId>,
     /// Redacted, line-oriented timeline.
     pub text: String,
+    /// Opaque cursor for the next bounded export page.
+    pub next_cursor: Option<String>,
 }
 
 async fn audit_export(
     State(state): State<ApiState>,
     Query(query): Query<AuditQuery>,
 ) -> Result<Json<AuditTextExport>, ApiError> {
+    let limit = page_limit(query.limit, 1_000, 5_000)?;
+    let page = state.kernel.journal().audit_event_page(
+        query.transaction_id,
+        limit,
+        query.cursor.as_deref(),
+    )?;
     Ok(Json(AuditTextExport {
         transaction_id: query.transaction_id,
-        text: state.kernel.journal().export_text(query.transaction_id)?,
+        text: render_audit_text(&page.items),
+        next_cursor: page.next_cursor,
     }))
 }
 
@@ -318,8 +399,30 @@ async fn audit_verify(State(state): State<ApiState>) -> Result<Json<AuditVerific
 
 async fn recovery_actions(
     State(state): State<ApiState>,
+    Query(query): Query<PageQuery>,
 ) -> Result<Json<Vec<RecoveryRecord>>, ApiError> {
-    Ok(Json(state.kernel.journal().recovery_actions()?))
+    let limit = page_limit(query.limit, 200, 500)?;
+    Ok(Json(
+        state
+            .kernel
+            .journal()
+            .recovery_action_page(limit, query.cursor.as_deref())?
+            .items,
+    ))
+}
+
+async fn recovery_action_page(
+    State(state): State<ApiState>,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<ApiPage<RecoveryRecord>>, ApiError> {
+    let limit = page_limit(query.limit, 200, 500)?;
+    Ok(Json(
+        state
+            .kernel
+            .journal()
+            .recovery_action_page(limit, query.cursor.as_deref())?
+            .into(),
+    ))
 }
 
 /// Optional labels for a real deterministic demo transaction.
@@ -469,56 +572,34 @@ async fn get_transaction_bundle(
 ) -> Result<Json<TransactionBundle>, ApiError> {
     let transaction_id = parse_id(&id, "transaction")?;
     let journal = state.kernel.journal();
-    let transaction = journal.transaction(transaction_id)?;
-    let intent = journal.get_object("intent", &transaction.intent_id.to_string())?;
-    let plan = load_plan(&state.kernel, transaction.plan_id)?;
-    let effect_ids = &transaction.effect_ids;
-    let policy_decisions = journal
-        .objects::<PolicyDecision>("policy_decision")?
-        .into_iter()
-        .filter(|decision| effect_ids.contains(&decision.effect_id))
-        .collect();
-    Ok(Json(TransactionBundle {
-        transaction,
-        intent,
-        plan,
-        policy_decisions,
-        approval_requests: for_transaction(journal.objects("approval_request")?, transaction_id),
-        approval_grants: for_transaction(journal.objects("approval_grant")?, transaction_id),
-        executions: for_transaction(journal.objects("execution")?, transaction_id),
-        receipts: for_transaction(journal.objects("receipt")?, transaction_id),
-        verifications: for_transaction(journal.objects("verification")?, transaction_id),
-        compensations: for_transaction(journal.objects("compensation")?, transaction_id),
-        events: journal.export_events(Some(transaction_id))?,
-    }))
-}
-
-trait TransactionBound {
-    fn transaction_id(&self) -> TransactionId;
-}
-
-macro_rules! transaction_bound {
-    ($($kind:ty),+ $(,)?) => {
-        $(impl TransactionBound for $kind {
-            fn transaction_id(&self) -> TransactionId { self.transaction_id }
-        })+
-    };
-}
-
-transaction_bound!(
-    ApprovalRequest,
-    ApprovalGrant,
-    Execution,
-    Receipt,
-    Verification,
-    Compensation
-);
-
-fn for_transaction<T: TransactionBound>(values: Vec<T>, id: TransactionId) -> Vec<T> {
-    values
-        .into_iter()
-        .filter(|value| value.transaction_id() == id)
-        .collect()
+    let bundle = journal.read_snapshot(|snapshot| {
+        let transaction = snapshot.transaction(transaction_id)?;
+        let intent = snapshot.get_object("intent", &transaction.intent_id.to_string())?;
+        let plan = match snapshot.get_object("preflighted_plan", &transaction.plan_id.to_string()) {
+            Ok(plan) => plan,
+            Err(JournalError::NotFound { .. }) => {
+                snapshot.get_object("proposed_plan", &transaction.plan_id.to_string())?
+            }
+            Err(error) => return Err(error),
+        };
+        let policy_decisions =
+            snapshot.objects_for_effects("policy_decision", &transaction.effect_ids)?;
+        Ok(TransactionBundle {
+            transaction,
+            intent,
+            plan,
+            policy_decisions,
+            approval_requests: snapshot
+                .objects_for_transaction("approval_request", transaction_id)?,
+            approval_grants: snapshot.objects_for_transaction("approval_grant", transaction_id)?,
+            executions: snapshot.objects_for_transaction("execution", transaction_id)?,
+            receipts: snapshot.objects_for_transaction("receipt", transaction_id)?,
+            verifications: snapshot.objects_for_transaction("verification", transaction_id)?,
+            compensations: snapshot.objects_for_transaction("compensation", transaction_id)?,
+            events: snapshot.export_events(Some(transaction_id))?,
+        })
+    })?;
+    Ok(Json(bundle))
 }
 
 fn load_plan(kernel: &Kernel, id: PlanId) -> Result<Plan, JournalError> {
@@ -532,6 +613,35 @@ fn load_plan(kernel: &Kernel, id: PlanId) -> Result<Plan, JournalError> {
             .get_object("proposed_plan", &id.to_string()),
         Err(error) => Err(error),
     }
+}
+
+fn page_limit(requested: Option<usize>, default: usize, maximum: usize) -> Result<usize, ApiError> {
+    let limit = requested.unwrap_or(default);
+    if limit == 0 || limit > maximum {
+        return Err(ApiError::bad_request(
+            "invalid_pagination",
+            format!("page limit must be within 1..={maximum}"),
+        ));
+    }
+    Ok(limit)
+}
+
+fn render_audit_text(events: &[AuditEvent]) -> String {
+    let mut output = String::new();
+    for event in events {
+        let _ = writeln!(
+            output,
+            "{:06} {} {} tx={} hash={}",
+            event.sequence,
+            event.recorded_at.to_rfc3339(),
+            event.event_type,
+            event
+                .transaction_id
+                .map_or_else(|| "-".into(), |id| id.to_string()),
+            event.hash.get(..12).unwrap_or(&event.hash),
+        );
+    }
+    output
 }
 
 fn parse_id<T>(value: &str, kind: &'static str) -> Result<T, ApiError>
@@ -570,7 +680,9 @@ impl ApiError {
 
 impl From<JournalError> for ApiError {
     fn from(error: JournalError) -> Self {
-        let status = if matches!(error, JournalError::NotFound { .. }) {
+        let status = if matches!(error, JournalError::InvalidCursor(_)) {
+            StatusCode::BAD_REQUEST
+        } else if matches!(error, JournalError::NotFound { .. }) {
             StatusCode::NOT_FOUND
         } else if matches!(
             error,
@@ -585,7 +697,11 @@ impl From<JournalError> for ApiError {
         };
         Self {
             status,
-            code: "journal_error",
+            code: if matches!(error, JournalError::InvalidCursor(_)) {
+                "invalid_pagination"
+            } else {
+                "journal_error"
+            },
             message: error.to_string(),
         }
     }
@@ -620,12 +736,20 @@ impl From<KernelError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let status = self.status;
         let body = Json(json!({
             "error": {
                 "code": self.code,
                 "message": self.message,
             }
         }));
-        (self.status, body).into_response()
+        let mut response = (status, body).into_response();
+        if status == StatusCode::UNAUTHORIZED {
+            response.headers_mut().insert(
+                header::WWW_AUTHENTICATE,
+                HeaderValue::from_static("Bearer realm=\"veyra\""),
+            );
+        }
+        response
     }
 }

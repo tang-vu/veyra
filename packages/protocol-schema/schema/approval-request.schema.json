@@ -181,6 +181,10 @@
               "description": "Exact executable.",
               "type": "string"
             },
+            "executable_sha256": {
+              "description": "SHA-256 of the executable bytes observed during preflight.",
+              "type": "string"
+            },
             "kind": {
               "type": "string",
               "const": "process"
@@ -194,6 +198,7 @@
           "required": [
             "kind",
             "executable",
+            "executable_sha256",
             "args",
             "workdir",
             "environment_keys"

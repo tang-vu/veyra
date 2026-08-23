@@ -10,11 +10,15 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use veyra_executor::{
     AdapterContext, AdapterError, AdapterPreflight, AdapterRecovery, AdapterResult, EffectAdapter,
-    StagedEffect,
+    StagedEffect, validate_capability_constraints,
 };
 use veyra_protocol::{
-    Condition, Effect, InputValue, Preview, ResourceScope, Reversibility, VerificationCheck,
+    Condition, Effect, InputValue, Preview, ResourceScope, Reversibility, RiskLevel,
+    VerificationCheck,
 };
+
+const MAXIMUM_COUNTER_NAME_BYTES: usize = 128;
+const MAXIMUM_INCREMENT_MAGNITUDE: i64 = 1_000_000;
 
 /// Educational reversible counter adapter.
 #[derive(Debug, Default)]
@@ -32,14 +36,40 @@ impl EffectAdapter for CounterAdapter {
         if effect.adapter != self.name()
             || effect.operation != "increment"
             || effect.reversibility != Reversibility::Reversible
+            || effect.risk < RiskLevel::Medium
         {
             return Err(AdapterError::InvalidEffect(
-                "counter effects require example.counter/increment and reversible classification"
+                "counter effects require example.counter/increment, reversible classification, and at least medium risk"
                     .into(),
             ));
         }
-        let _ = counter_name(effect)?;
+        let counter = counter_name(effect)?;
+        if effect.inputs.len() != 1 || !effect.inputs.contains_key("amount") {
+            return Err(AdapterError::InvalidEffect(
+                "counter effect requires exactly one `amount` input".into(),
+            ));
+        }
         let _ = amount(effect)?;
+        validate_capability_constraints(effect, &[])?;
+        if !effect.preconditions.is_empty() {
+            return Err(AdapterError::InvalidEffect(
+                "counter preconditions are not implemented and cannot be declared".into(),
+            ));
+        }
+        if effect.expected_postconditions.is_empty()
+            || effect.expected_postconditions.iter().any(|condition| {
+                !matches!(condition, Condition::Custom { name, parameters }
+                    if name == "example.counter_equals/v1"
+                        && parameters.as_object().is_some_and(|parameters|
+                            parameters.len() == 2
+                                && parameters.get("counter").and_then(Value::as_str) == Some(counter)
+                                && parameters.get("expected").and_then(Value::as_i64).is_some()))
+            })
+        {
+            return Err(AdapterError::InvalidEffect(
+                "counter effect declares an unsupported or malformed postcondition".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -65,6 +95,7 @@ impl EffectAdapter for CounterAdapter {
         effect: &Effect,
         _context: &AdapterContext,
     ) -> Result<StagedEffect, AdapterError> {
+        self.validate(effect)?;
         let counter = counter_name(effect)?;
         let before = self.value(counter)?;
         let after = before
@@ -90,6 +121,7 @@ impl EffectAdapter for CounterAdapter {
         staged: &StagedEffect,
         _context: &AdapterContext,
     ) -> Result<AdapterResult, AdapterError> {
+        self.validate(effect)?;
         validate_stage(self.name(), effect, staged)?;
         let (counter, before, after) = stage_values(staged)?;
         let mut counters = self.lock()?;
@@ -111,6 +143,7 @@ impl EffectAdapter for CounterAdapter {
         _result: &AdapterResult,
         _context: &AdapterContext,
     ) -> Result<Vec<VerificationCheck>, AdapterError> {
+        self.validate(effect)?;
         validate_stage(self.name(), effect, staged)?;
         let (counter, _before, after) = stage_values(staged)?;
         let observed = self.value(counter)?;
@@ -130,6 +163,7 @@ impl EffectAdapter for CounterAdapter {
         staged: &StagedEffect,
         _context: &AdapterContext,
     ) -> Result<AdapterRecovery, AdapterError> {
+        self.validate(effect)?;
         validate_stage(self.name(), effect, staged)?;
         let (counter, before, after) = stage_values(staged)?;
         let mut counters = self.lock()?;
@@ -164,7 +198,15 @@ fn counter_name(effect: &Effect) -> Result<&str, AdapterError> {
         ResourceScope::Generic {
             namespace,
             resource,
-        } if namespace == "example.counter" && !resource.is_empty() => Ok(resource),
+        } if namespace == "example.counter"
+            && !resource.is_empty()
+            && resource.len() <= MAXIMUM_COUNTER_NAME_BYTES
+            && resource
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_')) =>
+        {
+            Ok(resource)
+        }
         _ => Err(AdapterError::InvalidEffect(
             "counter resource must use the example.counter generic namespace".into(),
         )),
@@ -173,9 +215,16 @@ fn counter_name(effect: &Effect) -> Result<&str, AdapterError> {
 
 fn amount(effect: &Effect) -> Result<i64, AdapterError> {
     match effect.inputs.get("amount") {
-        Some(InputValue::Public { value }) => value.as_i64().ok_or_else(|| {
-            AdapterError::InvalidEffect("counter amount must be a public integer".into())
-        }),
+        Some(InputValue::Public { value }) => value
+            .as_i64()
+            .filter(|amount| {
+                *amount != 0 && amount.unsigned_abs() <= MAXIMUM_INCREMENT_MAGNITUDE as u64
+            })
+            .ok_or_else(|| {
+                AdapterError::InvalidEffect(
+                    "counter amount must be a non-zero bounded public integer".into(),
+                )
+            }),
         _ => Err(AdapterError::InvalidEffect(
             "counter amount must be a public integer".into(),
         )),
@@ -301,5 +350,32 @@ mod tests {
                 .restored
         );
         assert_eq!(adapter.value("requests").unwrap(), 0);
+
+        let mut unsupported_input = effect.clone();
+        unsupported_input.inputs.insert(
+            "ignored".into(),
+            InputValue::Public {
+                value: json!("misleading"),
+            },
+        );
+        assert!(matches!(
+            adapter.validate(&unsupported_input),
+            Err(AdapterError::InvalidEffect(_))
+        ));
+
+        let mut unsupported_constraint = effect.clone();
+        unsupported_constraint.required_capabilities[0]
+            .constraints
+            .insert("max_increment".into(), "1".into());
+        assert!(matches!(
+            adapter.validate(&unsupported_constraint),
+            Err(AdapterError::InvalidEffect(_))
+        ));
+
+        effect.risk = RiskLevel::Low;
+        assert!(matches!(
+            adapter.validate(&effect),
+            Err(AdapterError::InvalidEffect(_))
+        ));
     }
 }

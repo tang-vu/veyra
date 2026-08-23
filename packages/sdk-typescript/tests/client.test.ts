@@ -35,7 +35,7 @@ describe("VeyraClient", () => {
         {
           error: {
             code: "insufficient_authority",
-            message: "capability missing",
+            message: `capability missing ${TOKEN}\n\u001b[31m`,
           },
         },
         { status: 403 },
@@ -51,11 +51,15 @@ describe("VeyraClient", () => {
       .runTransaction("tx")
       .catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(VeyraApiError);
+    if (!(error instanceof VeyraApiError))
+      throw new Error("expected API error");
     expect(error).toMatchObject({
       status: 403,
       code: "insufficient_authority",
     });
-    expect(String(error)).not.toContain("token");
+    expect(error.message).toContain("[REDACTED]");
+    expect(error.message).not.toContain(TOKEN);
+    expect(error.message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
   });
 
   it("rejects non-loopback authority endpoints", () => {
@@ -101,6 +105,55 @@ describe("VeyraClient", () => {
     const [, init] = fetch.mock.calls[0]!;
     expect(init?.method).toBe("POST");
     expect(init?.body).toBe("{}");
+  });
+
+  it("encodes opaque keyset pagination without exposing authority in the URL", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockImplementation(async () =>
+        Response.json({ items: [], next_cursor: null }),
+      );
+    const client = new VeyraClient({
+      baseUrl: "http://127.0.0.1:7843/v1/",
+      token: TOKEN,
+      fetch,
+    });
+
+    await client.listTransactionPage({ limit: 25, cursor: "opaque+/=" });
+    await client.auditEventPage({
+      limit: 50,
+      cursor: "42",
+      transactionId: "transaction/id",
+    });
+    await client.recoveryActionPage({ limit: 10, cursor: "recovery-cursor" });
+
+    expect(fetch.mock.calls[0]![0].toString()).toBe(
+      "http://127.0.0.1:7843/v1/transactions/page?limit=25&cursor=opaque%2B%2F%3D",
+    );
+    expect(fetch.mock.calls[1]![0].toString()).toBe(
+      "http://127.0.0.1:7843/v1/audit/events/page?limit=50&cursor=42&transaction_id=transaction%2Fid",
+    );
+    expect(fetch.mock.calls[2]![0].toString()).toBe(
+      "http://127.0.0.1:7843/v1/recovery/page?limit=10&cursor=recovery-cursor",
+    );
+    expect(fetch.mock.calls[0]![0].toString()).not.toContain(TOKEN);
+  });
+
+  it("rejects unsafe pagination values before making a request", () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const client = new VeyraClient({
+      baseUrl: "http://127.0.0.1:7843/v1/",
+      token: TOKEN,
+      fetch,
+    });
+
+    expect(() => client.listTransactionPage({ limit: 0 })).toThrow(
+      "positive integer",
+    );
+    expect(() => client.auditEventPage({ cursor: "bad\ncursor" })).toThrow(
+      "cursor is malformed",
+    );
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("rejects malformed administrative bearer material", () => {

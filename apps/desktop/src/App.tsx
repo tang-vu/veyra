@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AuditEvent,
   AuditVerification,
@@ -61,12 +61,16 @@ export function App() {
 
 function ControlPlane({ client }: { client: VeyraClient }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactionCursor, setTransactionCursor] = useState<string | null>(
+    null,
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [bundle, setBundle] = useState<TransactionBundle | null>(null);
   const [view, setView] = useState<View>("transactions");
   const [query, setQuery] = useState("");
   const [intentContent, setIntentContent] = useState("Hello from Veyra.\n");
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [auditCursor, setAuditCursor] = useState<string | null>(null);
   const [audit, setAudit] = useState<AuditVerification | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -74,29 +78,87 @@ function ControlPlane({ client }: { client: VeyraClient }) {
   const [approvers, setApprovers] = useState<Record<string, string>>(() =>
     storedApprovers(),
   );
+  const selectedIdRef = useRef(selectedId);
+  const bundleRequestRef = useRef(0);
+  selectedIdRef.current = selectedId;
 
   const refreshTransactions = useCallback(async () => {
-    const latest = await client.listTransactions();
-    setTransactions(latest);
-    setSelectedId((current) => current ?? latest[0]?.id ?? null);
+    const page = await client.listTransactionPage({ limit: 100 });
+    setTransactions(page.items);
+    setTransactionCursor(page.next_cursor);
+    setSelectedId((current) => current ?? page.items[0]?.id ?? null);
   }, [client]);
 
   const loadBundle = useCallback(
     async (id: string) => {
-      const next = await client.getTransactionBundle(id);
-      setBundle(next);
+      const request = ++bundleRequestRef.current;
+      try {
+        const next = await client.getTransactionBundle(id);
+        if (
+          request === bundleRequestRef.current &&
+          selectedIdRef.current === id
+        ) {
+          setBundle(next);
+        }
+      } catch (caught: unknown) {
+        if (
+          request === bundleRequestRef.current &&
+          selectedIdRef.current === id
+        ) {
+          throw caught;
+        }
+      }
     },
     [client],
   );
 
   const refreshAudit = useCallback(async () => {
-    const [nextEvents, verification] = await Promise.all([
-      client.auditEvents(),
+    const [page, verification] = await Promise.all([
+      client.auditEventPage({ limit: 200 }),
       client.verifyAudit(),
     ]);
-    setEvents(nextEvents);
+    setEvents(page.items.slice().reverse());
+    setAuditCursor(page.next_cursor);
     setAudit(verification);
   }, [client]);
+
+  const loadMoreTransactions = useCallback(async () => {
+    if (transactionCursor === null) return;
+    setBusy("Loading older transactions");
+    setError(null);
+    try {
+      const page = await client.listTransactionPage({
+        limit: 100,
+        cursor: transactionCursor,
+      });
+      setTransactions((current) => appendUnique(current, page.items));
+      setTransactionCursor(page.next_cursor);
+    } catch (caught: unknown) {
+      setError(messageOf(caught));
+    } finally {
+      setBusy(null);
+    }
+  }, [client, transactionCursor]);
+
+  const loadMoreAudit = useCallback(async () => {
+    if (auditCursor === null) return;
+    setBusy("Loading older audit evidence");
+    setError(null);
+    try {
+      const page = await client.auditEventPage({
+        limit: 200,
+        cursor: auditCursor,
+      });
+      setEvents((current) =>
+        appendUnique(page.items.slice().reverse(), current),
+      );
+      setAuditCursor(page.next_cursor);
+    } catch (caught: unknown) {
+      setError(messageOf(caught));
+    } finally {
+      setBusy(null);
+    }
+  }, [auditCursor, client]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -112,6 +174,7 @@ function ControlPlane({ client }: { client: VeyraClient }) {
 
   useEffect(() => {
     if (selectedId === null) {
+      bundleRequestRef.current += 1;
       setBundle(null);
       return;
     }
@@ -130,7 +193,8 @@ function ControlPlane({ client }: { client: VeyraClient }) {
         await refreshTransactions();
         await refreshAudit();
         const target = id ?? selectedId;
-        if (target !== null) await loadBundle(target);
+        if (target !== null && selectedIdRef.current === target)
+          await loadBundle(target);
       } catch (caught: unknown) {
         setError(messageOf(caught));
       } finally {
@@ -241,6 +305,15 @@ function ControlPlane({ client }: { client: VeyraClient }) {
                   </button>
                 ))
               )}
+              {transactionCursor !== null && (
+                <button
+                  className="pagination-button"
+                  disabled={busy !== null}
+                  onClick={() => void loadMoreTransactions()}
+                >
+                  Load older transactions
+                </button>
+              )}
             </div>
           )}
 
@@ -266,6 +339,15 @@ function ControlPlane({ client }: { client: VeyraClient }) {
                     <small>#{event.sequence.toString().padStart(4, "0")}</small>
                   </button>
                 ))}
+              {auditCursor !== null && (
+                <button
+                  className="pagination-button"
+                  disabled={busy !== null}
+                  onClick={() => void loadMoreAudit()}
+                >
+                  Load older evidence
+                </button>
+              )}
             </div>
           )}
 
@@ -351,6 +433,8 @@ function Header({
   theme: Theme;
   onTheme: () => void;
 }) {
+  const integrity =
+    audit === null ? "pending" : audit.valid ? "valid" : "invalid";
   return (
     <header className="topbar">
       <div className="identity">
@@ -364,12 +448,17 @@ function Header({
       </div>
       <div className="topbar-actions">
         <span
-          className={`integrity ${audit?.valid === true ? "valid" : "pending"}`}
+          className={`integrity ${integrity}`}
+          role={integrity === "invalid" ? "alert" : undefined}
         >
-          <span aria-hidden="true">{audit?.valid === true ? "✓" : "·"}</span>
-          {audit?.valid === true
-            ? `${audit.events_checked} events verified`
-            : "Checking journal"}
+          <span aria-hidden="true">
+            {integrity === "valid" ? "✓" : integrity === "invalid" ? "!" : "·"}
+          </span>
+          {integrity === "valid"
+            ? `${audit?.events_checked ?? 0} events verified`
+            : integrity === "invalid"
+              ? "Journal integrity failed"
+              : "Checking journal"}
         </span>
         <button
           className="icon-button"
@@ -804,6 +893,8 @@ function AuditView({
   events: AuditEvent[];
   verification: AuditVerification | null;
 }) {
+  const pending = verification === null;
+  const valid = verification?.valid === true;
   return (
     <div className="inspector audit-view">
       <section className="inspector-heading">
@@ -817,11 +908,13 @@ function AuditView({
           </div>
         </div>
         <StateBadge
-          state={verification?.valid === true ? "committed" : "manual_recovery"}
+          state={valid ? "committed" : pending ? "draft" : "manual_recovery"}
           label={
-            verification?.valid === true
+            valid
               ? "Chain verified"
-              : "Verification pending"
+              : pending
+                ? "Verification pending"
+                : "Integrity failure"
           }
         />
       </section>
@@ -1064,6 +1157,15 @@ function formatResource(resource: ResourceScope): string {
 
 function shortId(value: string): string {
   return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
+}
+
+function appendUnique<T extends { id: string }>(first: T[], second: T[]): T[] {
+  const seen = new Set<string>();
+  return [...first, ...second].filter((value) => {
+    if (seen.has(value.id)) return false;
+    seen.add(value.id);
+    return true;
+  });
 }
 
 function shortDigest(value: string): string {

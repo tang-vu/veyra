@@ -45,7 +45,7 @@
   ],
   "$defs": {
     "Condition": {
-      "description": "A typed condition evaluated before or after execution.",
+      "description": "A typed condition vocabulary reserved for preconditions and evaluated for postconditions.\n\nThe V0.1 kernel rejects non-empty precondition lists until adapters have a versioned evaluation\ncontract; supported postconditions are still evaluated after execution.",
       "oneOf": [
         {
           "description": "A relative filesystem path must exist or not exist.",

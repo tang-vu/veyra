@@ -38,6 +38,16 @@ const gates = {
     "--locked",
   ]),
   typescript: run(pnpm.command, [...pnpm.arguments, "test"]),
+  desktop: run(pnpm.command, [
+    ...pnpm.arguments,
+    "--filter",
+    "@veyra/desktop",
+    "exec",
+    "vitest",
+    "run",
+    "src",
+    "--reporter=verbose",
+  ]),
   demo: run("cargo", [
     `+${rustToolchain}`,
     "run",

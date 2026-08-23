@@ -20,37 +20,49 @@ Errors use:
 
 Expected status classes are `400` malformed input, `401` token failure, `403` insufficient authority,
 `404` absent object, `409` state/replay/revision conflict, and `500` trusted-core failure. Clients
-must make decisions from status and `code`, not parse message text.
+must make decisions from status and `code`, not parse message text. A `401` response also includes
+`WWW-Authenticate: Bearer realm="veyra"`. Every response is `Cache-Control: no-store` and
+`X-Content-Type-Options: nosniff`.
 
 ## API endpoints
 
 All paths below are relative to `/v1/`.
 
-| Method | Path                               | Request                                           | Success response                                          |
-| ------ | ---------------------------------- | ------------------------------------------------- | --------------------------------------------------------- |
-| GET    | `health`                           | —                                                 | API and protocol versions                                 |
-| POST   | `principals`                       | `Principal`                                       | registered `Principal` (`201`)                            |
-| POST   | `intents`                          | `Intent`                                          | intent, proposed plan, and transaction (`201`)            |
-| GET    | `intents/{id}`                     | —                                                 | `Intent`                                                  |
-| GET    | `plans/{id}`                       | —                                                 | latest proposed/preflighted `Plan`                        |
-| GET    | `transactions`                     | —                                                 | latest `Transaction[]`                                    |
-| GET    | `transactions/{id}`                | —                                                 | `Transaction`                                             |
-| GET    | `transactions/{id}/bundle`         | —                                                 | causal aggregate for inspection                           |
-| POST   | `transactions/{id}/preview`        | empty                                             | preview, policy decisions, approval requests, transaction |
-| POST   | `transactions/{id}/run`            | empty                                             | execution/receipt/verification outcome                    |
-| POST   | `transactions/{id}/rollback`       | empty                                             | compensation records and resulting transaction            |
-| POST   | `approvals/{id}/grant`             | `{ "approver_id": UUID }`                         | grant and transaction outcome                             |
-| POST   | `capabilities`                     | `{ "issuer_id": UUID, "capability": Capability }` | `Capability` (`201`)                                      |
-| POST   | `capabilities/{id}/revoke`         | `{ "revoker_id": UUID }`                          | no body (`204`)                                           |
-| GET    | `audit/events?transaction_id={id}` | —                                                 | redacted `AuditEvent[]`                                   |
-| GET    | `audit/export?transaction_id={id}` | —                                                 | human-readable redacted text                              |
-| GET    | `audit/verify`                     | —                                                 | sequence/hash verification result                         |
-| GET    | `recovery`                         | —                                                 | conservative recovery classifications                     |
-| POST   | `demo/seed`                        | `{ "content"?: string }`                          | real demo principals, capability, and submission (`201`)  |
+| Method | Path                                                    | Request                                           | Success response                                          |
+| ------ | ------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------- |
+| GET    | `health`                                                | —                                                 | API and protocol versions                                 |
+| POST   | `principals`                                            | `Principal`                                       | registered `Principal` (`201`)                            |
+| POST   | `intents`                                               | `Intent`                                          | intent, proposed plan, and transaction (`201`)            |
+| GET    | `intents/{id}`                                          | —                                                 | `Intent`                                                  |
+| GET    | `plans/{id}`                                            | —                                                 | latest proposed/preflighted `Plan`                        |
+| GET    | `transactions?limit={n}`                                | —                                                 | bounded latest `Transaction[]`                            |
+| GET    | `transactions/page?limit={n}&cursor={c}`                | —                                                 | `{ items: Transaction[], next_cursor }`                   |
+| GET    | `transactions/{id}`                                     | —                                                 | `Transaction`                                             |
+| GET    | `transactions/{id}/bundle`                              | —                                                 | causal aggregate for inspection                           |
+| POST   | `transactions/{id}/preview`                             | empty                                             | preview, policy decisions, approval requests, transaction |
+| POST   | `transactions/{id}/run`                                 | empty                                             | execution/receipt/verification outcome                    |
+| POST   | `transactions/{id}/rollback`                            | empty                                             | compensation records and resulting transaction            |
+| POST   | `approvals/{id}/grant`                                  | `{ "approver_id": UUID }`                         | grant and transaction outcome                             |
+| POST   | `capabilities`                                          | `{ "issuer_id": UUID, "capability": Capability }` | `Capability` (`201`)                                      |
+| POST   | `capabilities/{id}/revoke`                              | `{ "revoker_id": UUID }`                          | no body (`204`)                                           |
+| GET    | `audit/events?transaction_id={id}&limit={n}`            | —                                                 | bounded newest-first redacted `AuditEvent[]`              |
+| GET    | `audit/events/page?...&cursor={c}`                      | —                                                 | `{ items: AuditEvent[], next_cursor }`                    |
+| GET    | `audit/export?transaction_id={id}&limit={n}&cursor={c}` | —                                                 | bounded ascending text plus `next_cursor`                 |
+| GET    | `audit/verify`                                          | —                                                 | sequence/hash verification result                         |
+| GET    | `recovery?limit={n}`                                    | —                                                 | bounded conservative recovery classifications             |
+| GET    | `recovery/page?limit={n}&cursor={c}`                    | —                                                 | `{ items: RecoveryRecord[], next_cursor }`                |
+| POST   | `demo/seed`                                             | `{ "content"?: string }`                          | real demo principals, capability, and submission (`201`)  |
 
 The bundle contains transaction, intent, plan, policy decisions, requests, grants, executions,
 receipts, verifications, compensations, and events from one consistent database read path. Serialized
 record shapes live in the generated JSON Schemas.
+
+List endpoints are hard-bounded. Transactions default to 100 and allow at most 500; recent audit
+events default to 200 and allow at most 1,000; recovery defaults to 200 and allows at most 500;
+ascending text export defaults to 1,000 and allows at most 5,000. Use the corresponding `/page`
+endpoint (or export response) and pass its opaque `next_cursor` unchanged until it is `null`.
+Malformed cursors and limits return `400 invalid_pagination`. Legacy array endpoints intentionally
+return only their bounded first page.
 
 Example:
 
@@ -89,7 +101,7 @@ veyra principal register FILE
 veyra intent submit FILE
 veyra intent show ID
 veyra plan show ID
-veyra tx list
+veyra tx list [--limit 100] [--cursor OPAQUE_CURSOR]
 veyra tx preview ID
 veyra tx run ID
 veyra tx inspect ID
@@ -97,7 +109,7 @@ veyra tx rollback ID
 veyra approval grant REQUEST_ID --approver PRINCIPAL_ID
 veyra capability issue FILE --issuer PRINCIPAL_ID
 veyra audit verify
-veyra audit export [--transaction TRANSACTION_ID]
+veyra audit export [--transaction TRANSACTION_ID] [--limit 1000] [--cursor OPAQUE_CURSOR]
 veyra demo [--directory PATH]
 ```
 

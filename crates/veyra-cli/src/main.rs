@@ -11,7 +11,8 @@ use tempfile::TempDir;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use veyra_protocol::{
-    ApprovalRequestId, AuditVerification, Capability, Principal, PrincipalId, TransactionId,
+    ApprovalRequestId, AuditVerification, Capability, IntentId, PlanId, Principal, PrincipalId,
+    TransactionId,
 };
 use veyra_server::{
     ApiState, DemoSeed, DemoSeedRequest, GrantApprovalRequest, IssueCapabilityRequest,
@@ -115,27 +116,34 @@ enum IntentCommand {
     /// Submit an intent JSON file to the configured planner.
     Submit { file: PathBuf },
     /// Show one persisted intent.
-    Show { id: String },
+    Show { id: IntentId },
 }
 
 #[derive(Debug, Subcommand)]
 enum PlanCommand {
     /// Show one proposed or preflighted plan.
-    Show { id: String },
+    Show { id: PlanId },
 }
 
 #[derive(Debug, Subcommand)]
 enum TransactionCommand {
     /// List latest transaction snapshots.
-    List,
+    List {
+        /// Maximum snapshots returned in this page (1..=500).
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        /// Opaque cursor returned by a previous page.
+        #[arg(long)]
+        cursor: Option<String>,
+    },
     /// Run adapter preflight and policy without executing side effects.
-    Preview { id: String },
+    Preview { id: TransactionId },
     /// Execute and verify an approved transaction.
-    Run { id: String },
+    Run { id: TransactionId },
     /// Inspect the full causal transaction bundle.
-    Inspect { id: String },
+    Inspect { id: TransactionId },
     /// Roll back or compensate supported effects.
-    Rollback { id: String },
+    Rollback { id: TransactionId },
 }
 
 #[derive(Debug, Subcommand)]
@@ -166,6 +174,12 @@ enum AuditCommand {
     Export {
         #[arg(long)]
         transaction: Option<TransactionId>,
+        /// Maximum events returned in this page (1..=5000).
+        #[arg(long, default_value_t = 1_000)]
+        limit: usize,
+        /// Opaque cursor returned by a previous page.
+        #[arg(long)]
+        cursor: Option<String>,
     },
 }
 
@@ -269,7 +283,11 @@ async fn run_transaction_command(
     command: TransactionCommand,
 ) -> Result<Value, CliError> {
     match command {
-        TransactionCommand::List => client.get("transactions").await,
+        TransactionCommand::List { limit, cursor } => {
+            client
+                .get(&page_path("transactions/page", limit, cursor.as_deref())?)
+                .await
+        }
         TransactionCommand::Preview { id } => {
             client
                 .post_empty(&format!("transactions/{id}/preview"))
@@ -292,11 +310,52 @@ async fn run_transaction_command(
 async fn run_audit_command(client: &ApiClient, command: AuditCommand) -> Result<Value, CliError> {
     match command {
         AuditCommand::Verify => client.get("audit/verify").await,
-        AuditCommand::Export { transaction } => {
-            let suffix = transaction.map_or_else(String::new, |id| format!("?transaction_id={id}"));
-            client.get(&format!("audit/export{suffix}")).await
+        AuditCommand::Export {
+            transaction,
+            limit,
+            cursor,
+        } => {
+            if !(1..=5_000).contains(&limit) {
+                return Err(CliError::Input(
+                    "audit export limit must be within 1..=5000".into(),
+                ));
+            }
+            let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+            serializer.append_pair("limit", &limit.to_string());
+            if let Some(cursor) = cursor {
+                validate_page_cursor(&cursor)?;
+                serializer.append_pair("cursor", &cursor);
+            }
+            if let Some(transaction) = transaction {
+                serializer.append_pair("transaction_id", &transaction.to_string());
+            }
+            client
+                .get(&format!("audit/export?{}", serializer.finish()))
+                .await
         }
     }
+}
+
+fn page_path(path: &str, limit: usize, cursor: Option<&str>) -> Result<String, CliError> {
+    if !(1..=500).contains(&limit) {
+        return Err(CliError::Input(
+            "transaction page limit must be within 1..=500".into(),
+        ));
+    }
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    serializer.append_pair("limit", &limit.to_string());
+    if let Some(cursor) = cursor {
+        validate_page_cursor(cursor)?;
+        serializer.append_pair("cursor", cursor);
+    }
+    Ok(format!("{path}?{}", serializer.finish()))
+}
+
+fn validate_page_cursor(cursor: &str) -> Result<(), CliError> {
+    if cursor.is_empty() || cursor.len() > 4_096 || cursor.chars().any(char::is_control) {
+        return Err(CliError::Input("page cursor is malformed".into()));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]
@@ -402,7 +461,13 @@ async fn exercise_demo(
 }
 
 fn effect_path(bundle: &TransactionBundle) -> Result<&str, CliError> {
-    match &bundle.plan.steps[0].effects[0].resource {
+    let effect = bundle
+        .plan
+        .steps
+        .first()
+        .and_then(|step| step.effects.first())
+        .ok_or_else(|| CliError::Invariant("demo plan contained no effect".into()))?;
+    match &effect.resource {
         veyra_protocol::ResourceScope::Filesystem { path, .. } => Ok(path),
         _ => Err(CliError::Invariant(
             "demo plan did not contain a filesystem resource".into(),
@@ -526,7 +591,7 @@ impl ApiClient {
             .send()
             .await
             .map_err(CliError::Http)?;
-        decode_response(response).await
+        decode_response(response, &self.token).await
     }
 
     async fn post<B: Serialize + ?Sized>(&self, path: &str, body: &B) -> Result<Value, CliError> {
@@ -541,7 +606,7 @@ impl ApiClient {
             .send()
             .await
             .map_err(CliError::Http)?;
-        decode_response(response).await
+        decode_response(response, &self.token).await
     }
 
     async fn post_typed<B, T>(&self, path: &str, body: &B) -> Result<T, CliError>
@@ -557,15 +622,24 @@ impl ApiClient {
             .send()
             .await
             .map_err(CliError::Http)?;
-        decode_response(response).await
+        decode_response(response, &self.token).await
     }
 
     fn url(&self, path: &str) -> Result<Url, CliError> {
-        self.root.join(path).map_err(CliError::Url)
+        let url = self.root.join(path).map_err(CliError::Url)?;
+        if url.origin() != self.root.origin() || !url.path().starts_with(self.root.path()) {
+            return Err(CliError::Input(
+                "API request path escapes the configured versioned root".into(),
+            ));
+        }
+        Ok(url)
     }
 }
 
-async fn decode_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<T, CliError> {
+async fn decode_response<T: DeserializeOwned>(
+    response: reqwest::Response,
+    token: &str,
+) -> Result<T, CliError> {
     let status = response.status();
     if response.content_length().is_some_and(|length| {
         length > u64::try_from(MAXIMUM_API_RESPONSE_BYTES).unwrap_or(u64::MAX)
@@ -600,9 +674,27 @@ async fn decode_response<T: DeserializeOwned>(response: reqwest::Response) -> Re
             .ok()
             .and_then(|value| value.pointer("/error/message")?.as_str().map(str::to_owned))
             .unwrap_or_else(|| "local API request failed".into());
-        return Err(CliError::Api { status, message });
+        return Err(CliError::Api {
+            status,
+            message: safe_error_message(&message, token),
+        });
     }
     serde_json::from_slice(&bytes).map_err(CliError::Json)
+}
+
+fn safe_error_message(message: &str, token: &str) -> String {
+    message
+        .replace(token, "[REDACTED]")
+        .chars()
+        .take(1_024)
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -625,6 +717,25 @@ mod tests {
             )
             .is_err()
         );
+
+        let client =
+            ApiClient::new(Url::parse("http://127.0.0.1:7843/v1/").unwrap(), token()).unwrap();
+        assert!(client.url("transactions").is_ok());
+        assert!(client.url("../health").is_err());
+    }
+
+    #[test]
+    fn typed_ids_and_error_rendering_reject_terminal_or_url_injection() {
+        assert!(Cli::try_parse_from(["veyra", "tx", "run", "../demo/seed?x="]).is_err());
+        let token = token();
+        let rendered = safe_error_message(
+            &format!("reflected {token}\n\u{1b}[31m{}", "x".repeat(2_000)),
+            &token,
+        );
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(!rendered.contains(&token));
+        assert!(!rendered.chars().any(char::is_control));
+        assert_eq!(rendered.chars().count(), 1_024);
     }
 }
 

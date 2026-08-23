@@ -74,23 +74,27 @@ stateDiagram-v2
 
 The complete graph also permits explicit cancellation and failure edges; the authoritative table is
 `StateMachine::allows` in `veyra-core`. Every transition uses an optimistic snapshot revision and is
-recorded after durable state mutation. Invalid or stale transitions return typed errors.
+recorded atomically with durable state mutation. Invalid or stale transitions return typed errors.
 
 ## One execution
 
 1. The kernel validates the intent and registered principal, asks the configured planner for a plan,
    then rejects unknown adapters, malformed effects, causal mismatches, and scope expansion.
-2. Each adapter performs side-effect-free preflight. The preview becomes part of the canonical effect
-   digest used by policy and approval.
-3. Policy finds live capabilities and returns deny, allow, or require-approval. A human approval grant
-   consumes a single-use challenge nonce and repeats the exact digest.
-4. Immediately before staging/execution, the kernel revalidates capability status, approval digest,
-   and effect digest. It durably reserves both authority use and the idempotency key.
-5. The adapter stages durable restoration evidence, executes, and returns a bounded redacted result.
+2. Policy first checks live proposal-level authority. A denial is journaled without letting the
+   adapter observe the target.
+3. An authorized adapter performs side-effect-free preflight. Policy reevaluates the canonical effect
+   containing that exact preview and returns deny, allow, or require-approval.
+4. A human approval grant repeats the exact digest and single-use challenge nonce. The grant is
+   durable, but the nonce is consumed only when execution begins.
+5. Immediately before staging, the kernel revalidates capability status, aggregate use budgets,
+   approval expiry, and effect digest. For each effect it atomically consumes capability uses and the
+   optional approval nonce with audit evidence, then stages durable restoration data. Before crossing
+   the external side-effect boundary it also reserves the idempotency key.
+6. The adapter executes once and returns a bounded redacted result.
    The journal authenticates a receipt over that result.
-6. Adapter verification observes target state and evaluates every expected postcondition. Only all-pass
+7. Adapter verification observes target state and evaluates every expected postcondition. Only all-pass
    verification can transition to `committed`.
-7. Rollback walks effects in reverse order and refuses to overwrite state that no longer matches the
+8. Rollback walks effects in reverse order and refuses to overwrite state that no longer matches the
    executed post-state. Mixed recovery reports `partially_compensated`.
 
 ## Persistence and recovery
@@ -99,7 +103,10 @@ SQLite uses WAL mode and full synchronous durability. Immutable protocol objects
 transaction snapshots, staged descriptors, capability uses, approval nonces, idempotency
 reservations, and audit events share one database. Each audit event hashes canonical event content
 plus the previous hash; a transactionally updated local count/head anchor also detects tail
-deletion. A gap, reorder, mutation, broken link, or anchor mismatch fails verification.
+deletion. Materialized transaction, immutable-object, capability, nonce, stage, and idempotency rows
+are also bound back to audit payloads and checked in both directions. A gap, reorder, mutation,
+missing materialized row, broken link, or anchor mismatch fails verification. Aggregate transaction
+inspection is read from one SQLite snapshot so it cannot mix revisions during a concurrent update.
 
 On startup, transactions are normalized from their last durable phase. Planned,
 awaiting-approval, and approved work remains available through its normal guarded API. Incomplete

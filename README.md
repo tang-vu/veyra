@@ -19,8 +19,10 @@ outside the model's ability to police itself. Veyra turns each side effect into 
 transaction with independently enforced invariants:
 
 1. An untrusted planner proposes a typed `Plan` inside the intent's resource envelope.
-2. Adapters preflight effects and produce structured previews without mutating the target.
-3. Deny-by-default policy checks live, expiring, principal-bound capabilities.
+2. Deny-by-default policy checks live, expiring, principal-bound capabilities before adapters may
+   observe a target.
+3. Authorized adapters preflight effects without mutation; policy then reevaluates the exact
+   structured preview.
 4. Required approval covers the canonical digest of the exact preflighted effect.
 5. Execution uses idempotency reservations, bounded adapters, and an append-only journal.
 6. The kernel verifies declared postconditions before committing.
@@ -125,13 +127,21 @@ operations, and rejected if any resource exceeds the originating intent.
 - Effects do not execute without a live capability matching principal, transaction or intent,
   adapter, operation, exact resource, constraints, expiry, nonce, and remaining uses.
 - Approval is content-addressed using canonical JSON, so mutation after preview invalidates it.
+- Capability uses and an optional approval nonce commit atomically for each effect, with aggregate
+  use budgets reserved while a multi-effect plan is evaluated.
 - Filesystem effects use capability-based directory handles, reject traversal and symlink escape,
   recheck the exact captured file, stage mutations, and atomically refuse to replace a concurrently
   created destination. Rollback is verified and non-clobbering under its documented preconditions.
 - V0.1 performs no automatic adapter retries. Durable idempotency makes repeated operator requests
   return a known result, while uncertain crash outcomes enter manual recovery.
-- Audit events are hash-chained and receipts are locally MAC-authenticated. This detects local
-  tampering; it is not a blockchain, remote attestation, or protection from a fully compromised OS.
+- Audit events are hash-chained and receipts are locally MAC-authenticated. Transaction snapshots,
+  immutable protocol objects, capability facts, approval replay state, stages, and idempotency
+  state are content-bound to that chain. Verification reports corruption as an explicit invalid
+  result; this is still not a blockchain, remote attestation, or protection from an attacker able
+  to rewrite the complete database and local anchor.
+- V0.1 rejects non-empty protocol `preconditions` rather than pretending to enforce them. Each
+  bundled adapter accepts only exact input names and supported postconditions; filesystem checks
+  cannot read beyond the effect's resource scope.
 - “Reversible” means the adapter can restore the prior state under its documented preconditions.
   Mutating HTTP methods and process effects cannot claim reversibility; compensation is separate and
   may be partial. HTTP `GET`/`HEAD`/`OPTIONS` rely on the allowlisted service honoring their
@@ -150,7 +160,7 @@ coordination.
 - [`apps/desktop/`](apps/desktop/) — real React/Tauri control plane
 - [`examples/safe-workspace/`](examples/safe-workspace/) — runnable intent and policy examples
 - [`examples/custom-adapter/`](examples/custom-adapter/) — third-party reversible adapter example
-- [`evals/`](evals/) — 39 security and recovery scenarios with machine-readable results
+- [`evals/`](evals/) — 64 security and recovery scenarios with machine-readable results
 - [`docs/`](docs/) — architecture, VEP-0001, threat model, API/CLI, adapter guide, ADRs, and comparison
 
 ## Develop and verify

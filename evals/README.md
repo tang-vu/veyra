@@ -8,9 +8,11 @@ corepack pnpm eval
 ```
 
 `scenarios/security-and-recovery.json` maps each expectation to an observable Rust test, TypeScript
-test, or deterministic demo gate. `run.mjs` runs the locked, all-feature workspace suite and refuses
-to report success when a named probe is missing or a gate fails. It writes
-`results/latest.json` using `veyra.eval-results/v1`.
+test, focused verbose desktop test, or deterministic demo gate. `run.mjs` runs the locked,
+all-feature workspace suite and refuses to report success when a named probe is missing or a gate
+fails. The focused desktop gate keeps named UI-concurrency evidence observable even though the
+normal Vitest summary hides passing test names. The runner writes `results/latest.json` using
+`veyra.eval-results/v1`.
 
 The result statuses are:
 

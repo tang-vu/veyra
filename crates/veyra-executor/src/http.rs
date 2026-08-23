@@ -17,15 +17,16 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use veyra_protocol::{
-    Condition, Effect, InputValue, Preview, ResourceScope, Reversibility, VerificationCheck,
+    Condition, Effect, InputValue, Preview, ResourceScope, Reversibility, RiskLevel,
+    VerificationCheck,
 };
 
 use crate::{
     AdapterContext, AdapterError, AdapterPreflight, AdapterRecovery, AdapterResult, EffectAdapter,
     StagedEffect,
     util::{
-        no_unsupported_capability_constraints, public_string, public_string_map,
-        redact_secret_text, sha256,
+        public_string, public_string_map, redact_secret_text, sha256,
+        validate_capability_constraints,
     },
 };
 
@@ -101,7 +102,7 @@ impl HttpAdapter {
     }
 
     fn request_spec(&self, effect: &Effect) -> Result<HttpRequestSpec, AdapterError> {
-        no_unsupported_capability_constraints(effect, &[])?;
+        validate_capability_constraints(effect, &[])?;
         self.validate_shape(effect)?;
         let method = Method::from_bytes(public_string(&effect.inputs, "method")?.as_bytes())
             .map_err(|_| AdapterError::HttpSyntax("method"))?;
@@ -199,6 +200,16 @@ impl HttpAdapter {
         if effect.timeout_ms == 0 || effect.timeout_ms > self.config.maximum_timeout_ms {
             return Err(AdapterError::Policy(
                 "effect timeout exceeds HTTP adapter limit".into(),
+            ));
+        }
+        if effect.inputs.iter().any(|(name, input)| match input {
+            InputValue::Public { .. } => {
+                !matches!(name.as_str(), "method" | "url" | "headers" | "body")
+            }
+            InputValue::SecretRef { .. } => !name.starts_with("header:"),
+        }) {
+            return Err(AdapterError::InvalidEffect(
+                "HTTP effect contains an unsupported input".into(),
             ));
         }
         Ok(())
@@ -431,6 +442,31 @@ impl EffectAdapter for HttpAdapter {
         if effect.reversibility == Reversibility::Compensatable && effect.inverse.is_none() {
             return Err(AdapterError::InvalidEffect(
                 "compensatable HTTP request has no declared inverse".into(),
+            ));
+        }
+        let minimum_risk = if safe_method {
+            RiskLevel::Low
+        } else if effect.reversibility == Reversibility::Irreversible {
+            RiskLevel::High
+        } else {
+            RiskLevel::Medium
+        };
+        if effect.risk < minimum_risk {
+            return Err(AdapterError::InvalidEffect(
+                "HTTP effect understates the minimum risk for its method and reversibility".into(),
+            ));
+        }
+        if !effect.preconditions.is_empty() {
+            return Err(AdapterError::InvalidEffect(
+                "HTTP preconditions are not implemented and cannot be declared".into(),
+            ));
+        }
+        if effect.expected_postconditions.iter().any(|condition| {
+            !matches!(condition, Condition::HttpStatus { status } if (100..=599).contains(status))
+                && !matches!(condition, Condition::OutputSha256 { digest } if valid_sha256(digest))
+        }) {
+            return Err(AdapterError::InvalidEffect(
+                "HTTP effect declares an unsupported or malformed postcondition".into(),
             ));
         }
         Ok(())
@@ -818,6 +854,13 @@ fn explicit_non_default_port(url: &Url) -> Option<u16> {
     (explicit != default).then_some(explicit)
 }
 
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
 fn path_covers(prefix: &str, path: &str) -> bool {
     prefix == "/"
         || prefix == path
@@ -1055,6 +1098,47 @@ mod tests {
             .inputs
             .insert("url".into(), public("http://example.com/api"));
         assert!(adapter.validate(&wrong).is_err());
+    }
+
+    #[test]
+    fn mutating_http_effects_cannot_understate_risk() {
+        let adapter = adapter(8080);
+        let mut candidate = effect(8080);
+        candidate.risk = RiskLevel::Medium;
+        assert!(matches!(
+            adapter.validate(&candidate),
+            Err(AdapterError::InvalidEffect(_))
+        ));
+
+        candidate.preconditions.clear();
+        candidate
+            .inputs
+            .insert("ignored".into(), public("misleading"));
+        assert!(matches!(
+            adapter.validate(&candidate),
+            Err(AdapterError::InvalidEffect(_))
+        ));
+    }
+
+    #[test]
+    fn unsupported_http_conditions_fail_before_network_access() {
+        let adapter = adapter(8080);
+        let mut candidate = effect(8080);
+        candidate.expected_postconditions = vec![Condition::FileExists {
+            path: "private.txt".into(),
+            expected: true,
+        }];
+        assert!(matches!(
+            adapter.validate(&candidate),
+            Err(AdapterError::InvalidEffect(_))
+        ));
+
+        candidate.expected_postconditions = vec![Condition::HttpStatus { status: 201 }];
+        candidate.preconditions = vec![Condition::HttpStatus { status: 200 }];
+        assert!(matches!(
+            adapter.validate(&candidate),
+            Err(AdapterError::InvalidEffect(_))
+        ));
     }
 
     #[test]

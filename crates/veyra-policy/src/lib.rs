@@ -20,6 +20,8 @@ pub struct PolicyConfig {
     pub enabled_adapters: HashSet<String>,
     /// Maximum effect timeout accepted by kernel policy.
     pub maximum_timeout_ms: u64,
+    /// Maximum lifetime accepted for a content-addressed approval request.
+    pub maximum_approval_lifetime: Duration,
     /// Whether any irreversible effect can be authorized at all.
     pub allow_irreversible: bool,
 }
@@ -33,6 +35,7 @@ impl Default for PolicyConfig {
                 .map(str::to_owned)
                 .collect(),
             maximum_timeout_ms: 30_000,
+            maximum_approval_lifetime: Duration::minutes(10),
             allow_irreversible: false,
         }
     }
@@ -113,15 +116,17 @@ impl PolicyEngine {
             }
 
             let candidate = capabilities.iter().find(|capability| {
-                Self::capability_covers(
-                    capability,
-                    effect,
-                    transaction_id,
-                    intent_id,
-                    statuses.get(&capability.id).copied().unwrap_or_default(),
-                    &requirement.constraints,
-                    now,
-                )
+                statuses.get(&capability.id).is_some_and(|status| {
+                    Self::capability_covers(
+                        capability,
+                        effect,
+                        transaction_id,
+                        intent_id,
+                        *status,
+                        &requirement.constraints,
+                        now,
+                    )
+                })
             });
             if let Some(capability) = candidate {
                 if !matched.contains(&capability.id) {
@@ -196,7 +201,8 @@ impl PolicyEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`PolicyError::Digest`] if the effect cannot be canonically serialized.
+    /// Returns [`PolicyError::Digest`] if the effect cannot be canonically serialized, or
+    /// [`PolicyError::InvalidApprovalRequest`] for a pending preview.
     pub fn approval_request(
         &self,
         transaction_id: TransactionId,
@@ -204,8 +210,11 @@ impl PolicyEngine {
         now: DateTime<Utc>,
         lifetime: Duration,
     ) -> Result<ApprovalRequest, PolicyError> {
-        if lifetime <= Duration::zero() {
+        if lifetime <= Duration::zero() || lifetime > self.config.maximum_approval_lifetime {
             return Err(PolicyError::InvalidLifetime);
+        }
+        if matches!(effect.preview, veyra_protocol::Preview::Pending) {
+            return Err(PolicyError::InvalidApprovalRequest);
         }
         Ok(ApprovalRequest {
             id: ApprovalRequestId::new(),
@@ -242,9 +251,15 @@ impl PolicyEngine {
         {
             return Err(PolicyError::BindingMismatch);
         }
-        if now >= request.expires_at
+        if request.nonce.is_empty()
+            || request.nonce.len() > 256
+            || now < request.created_at
+            || now >= request.expires_at
             || now >= grant.expires_at
             || grant.granted_at < request.created_at
+            || grant.granted_at > now
+            || grant.expires_at <= grant.granted_at
+            || grant.expires_at > request.expires_at
         {
             return Err(PolicyError::ExpiredApproval);
         }
@@ -521,7 +536,7 @@ fn clean_relative(path: &str) -> Option<Vec<&str>> {
         || path.starts_with('/')
         || path.contains('\\')
         || path.contains(':')
-        || path.as_bytes().contains(&0)
+        || path.chars().any(char::is_control)
     {
         return None;
     }
@@ -567,6 +582,9 @@ pub enum PolicyError {
     /// Approval lifetime is zero, negative, or exceeds its challenge.
     #[error("approval lifetime is invalid")]
     InvalidLifetime,
+    /// Approval cannot be constructed before an authoritative adapter preview exists.
+    #[error("approval request has no authoritative preview")]
+    InvalidApprovalRequest,
 }
 
 #[cfg(test)]
@@ -605,7 +623,13 @@ mod tests {
             expected_postconditions: vec![],
             risk: RiskLevel::Medium,
             reversibility: Reversibility::Reversible,
-            preview: Preview::Pending,
+            preview: Preview::Filesystem {
+                operation: "create".into(),
+                path: "notes/hello.txt".into(),
+                before_sha256: None,
+                after_sha256: Some("aa".repeat(32)),
+                unified_diff: Some("+hello".into()),
+            },
             idempotency_key: "create-hello-v1".into(),
             timeout_ms: 1_000,
             retry: RetryPolicy {
@@ -663,12 +687,22 @@ mod tests {
         );
         assert_eq!(denied.outcome, PolicyOutcome::Deny);
 
+        let grant = capability(&effect, tx, now);
+        let missing_status = engine.evaluate(
+            &effect,
+            tx,
+            effect.causal_parent.intent_id,
+            std::slice::from_ref(&grant),
+            &HashMap::new(),
+            now,
+        );
+        assert_eq!(missing_status.outcome, PolicyOutcome::Deny);
         let allowed = engine.evaluate(
             &effect,
             tx,
             effect.causal_parent.intent_id,
-            &[capability(&effect, tx, now)],
-            &HashMap::new(),
+            std::slice::from_ref(&grant),
+            &HashMap::from([(grant.id, CapabilityStatus::default())]),
             now,
         );
         assert_eq!(allowed.outcome, PolicyOutcome::RequireApproval);
@@ -690,7 +724,7 @@ mod tests {
                     tx,
                     candidate.causal_parent.intent_id,
                     &[grant.clone()],
-                    &HashMap::new(),
+                    &HashMap::from([(grant.id, CapabilityStatus::default())]),
                     now,
                 )
                 .outcome,
@@ -706,7 +740,7 @@ mod tests {
                     tx,
                     candidate.causal_parent.intent_id,
                     &[grant.clone()],
-                    &HashMap::new(),
+                    &HashMap::from([(grant.id, CapabilityStatus::default())]),
                     now,
                 )
                 .outcome,
@@ -723,8 +757,8 @@ mod tests {
                     &candidate,
                     tx,
                     candidate.causal_parent.intent_id,
-                    &[grant],
-                    &HashMap::new(),
+                    std::slice::from_ref(&grant),
+                    &HashMap::from([(grant.id, CapabilityStatus::default())]),
                     now,
                 )
                 .outcome,
@@ -748,14 +782,29 @@ mod tests {
             Duration::minutes(1),
         )
         .unwrap();
+        let verification_time = now + Duration::seconds(1);
         engine
-            .verify_approval(&request, &grant, &original, tx, &HashSet::new(), now)
+            .verify_approval(
+                &request,
+                &grant,
+                &original,
+                tx,
+                &HashSet::new(),
+                verification_time,
+            )
             .unwrap();
 
         let mut mutated = original.clone();
         mutated.inputs.insert("content".into(), public("changed"));
         assert!(matches!(
-            engine.verify_approval(&request, &grant, &mutated, tx, &HashSet::new(), now),
+            engine.verify_approval(
+                &request,
+                &grant,
+                &mutated,
+                tx,
+                &HashSet::new(),
+                verification_time
+            ),
             Err(PolicyError::EffectMutated)
         ));
         assert!(matches!(
@@ -765,7 +814,7 @@ mod tests {
                 &original,
                 tx,
                 &HashSet::from([grant.nonce.clone()]),
-                now
+                verification_time
             ),
             Err(PolicyError::ApprovalReplay)
         ));

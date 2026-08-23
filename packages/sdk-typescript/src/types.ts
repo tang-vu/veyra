@@ -8,7 +8,7 @@ export type JsonValue =
 export type Id = string;
 export type Timestamp = string;
 
-export type PrincipalKind = "human" | "agent" | "service";
+export type PrincipalKind = "human" | "agent" | "service" | "system";
 export interface Principal {
   id: Id;
   display_name: string;
@@ -71,6 +71,7 @@ export type EffectPreview =
   | {
       kind: "process";
       executable: string;
+      executable_sha256: string;
       args: string[];
       workdir: string;
       environment_keys: string[];
@@ -346,4 +347,10 @@ export interface RecoveryRecord {
   transaction_id: Id;
   state: TransactionState;
   action: "resume_safe" | "manual_recovery";
+}
+
+/** One bounded keyset page. Treat `next_cursor` as opaque. */
+export interface ApiPage<T> {
+  items: T[];
+  next_cursor: string | null;
 }

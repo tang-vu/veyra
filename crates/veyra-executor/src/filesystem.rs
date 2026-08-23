@@ -16,12 +16,14 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use similar::TextDiff;
-use veyra_protocol::{Condition, Effect, Preview, ResourceScope, Reversibility, VerificationCheck};
+use veyra_protocol::{
+    Condition, Effect, Preview, ResourceScope, Reversibility, RiskLevel, VerificationCheck,
+};
 
 use crate::{
     AdapterContext, AdapterError, AdapterPreflight, AdapterRecovery, AdapterResult, EffectAdapter,
     StagedEffect,
-    util::{no_secret_inputs, no_unsupported_capability_constraints, public_string, sha256},
+    util::{no_secret_inputs, public_string, sha256, validate_capability_constraints},
 };
 
 const INTERNAL_DIRECTORY: &str = ".veyra";
@@ -299,7 +301,7 @@ impl EffectAdapter for FilesystemAdapter {
                 "adapter field is not `filesystem`".into(),
             ));
         }
-        no_unsupported_capability_constraints(effect, &[])?;
+        validate_capability_constraints(effect, &[])?;
         no_secret_inputs(&effect.inputs)?;
         let paths = self.paths(effect)?;
         match effect.operation.as_str() {
@@ -321,6 +323,54 @@ impl EffectAdapter for FilesystemAdapter {
             return Err(AdapterError::InvalidEffect(
                 "built-in file operations must declare `reversible`".into(),
             ));
+        }
+        if effect.operation != "read" && effect.risk < RiskLevel::Medium {
+            return Err(AdapterError::InvalidEffect(
+                "mutating filesystem operations require at least medium risk".into(),
+            ));
+        }
+        let expected_input =
+            matches!(effect.operation.as_str(), "create" | "patch").then_some("content");
+        if effect.inputs.len() != usize::from(expected_input.is_some())
+            || expected_input.is_some_and(|key| !effect.inputs.contains_key(key))
+        {
+            return Err(AdapterError::InvalidEffect(
+                "filesystem effect contains missing or unsupported inputs".into(),
+            ));
+        }
+        if !effect.preconditions.is_empty() {
+            return Err(AdapterError::InvalidEffect(
+                "filesystem preconditions are not implemented and cannot be declared".into(),
+            ));
+        }
+        for condition in &effect.expected_postconditions {
+            match condition {
+                Condition::FileExists { path, .. } => {
+                    let path = normalized_relative_path(path)?;
+                    if !paths.contains(&path) {
+                        return Err(AdapterError::Containment(
+                            "filesystem postcondition expands beyond the effect resource".into(),
+                        ));
+                    }
+                }
+                Condition::FileSha256 { path, digest } => {
+                    let path = normalized_relative_path(path)?;
+                    if !paths.contains(&path) {
+                        return Err(AdapterError::Containment(
+                            "filesystem postcondition expands beyond the effect resource".into(),
+                        ));
+                    }
+                    validate_sha256(digest, "filesystem postcondition")?;
+                }
+                Condition::OutputSha256 { digest } => {
+                    validate_sha256(digest, "filesystem output postcondition")?;
+                }
+                Condition::HttpStatus { .. } | Condition::Custom { .. } => {
+                    return Err(AdapterError::InvalidEffect(
+                        "filesystem effect declares an unsupported postcondition".into(),
+                    ));
+                }
+            }
         }
         if matches!(effect.operation.as_str(), "create" | "patch") {
             let _ = effect_content(effect, self.config.maximum_file_bytes)?;
@@ -1268,6 +1318,20 @@ fn require_digest(
     }
 }
 
+fn validate_sha256(value: &str, subject: &str) -> Result<(), AdapterError> {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        Ok(())
+    } else {
+        Err(AdapterError::InvalidEffect(format!(
+            "{subject} must contain a SHA-256 digest"
+        )))
+    }
+}
+
 fn verify_captured_file(
     directory: &Dir,
     path: &Path,
@@ -1280,6 +1344,7 @@ fn verify_captured_file(
 }
 
 fn bounded_diff(before: &[u8], after: &[u8], path: &str, limit: usize) -> Option<String> {
+    const TRUNCATION_MARKER: &str = "\n... diff truncated by Veyra ...\n";
     let before = std::str::from_utf8(before).ok()?;
     let after = std::str::from_utf8(after).ok()?;
     let mut diff = TextDiff::from_lines(before, after)
@@ -1288,9 +1353,17 @@ fn bounded_diff(before: &[u8], after: &[u8], path: &str, limit: usize) -> Option
         .header(path, path)
         .to_string();
     if diff.len() > limit {
-        diff.truncate(limit);
-        diff.push_str("\n... diff truncated by Veyra ...\n");
+        let content_limit = limit.saturating_sub(TRUNCATION_MARKER.len());
+        let boundary = (0..=content_limit)
+            .rev()
+            .find(|index| diff.is_char_boundary(*index))
+            .unwrap_or_default();
+        diff.truncate(boundary);
+        if TRUNCATION_MARKER.len() <= limit {
+            diff.push_str(TRUNCATION_MARKER);
+        }
     }
+    debug_assert!(diff.len() <= limit);
     Some(diff)
 }
 
@@ -1646,6 +1719,74 @@ mod tests {
             adapter.validate(&candidate),
             Err(AdapterError::InvalidEffect(_))
         ));
+
+        candidate.preconditions.clear();
+        candidate
+            .inputs
+            .insert("ignored".into(), public("misleading"));
+        assert!(matches!(
+            adapter.validate(&candidate),
+            Err(AdapterError::InvalidEffect(_))
+        ));
+    }
+
+    #[test]
+    fn mutating_filesystem_effects_cannot_understate_risk() {
+        let (_temp, adapter) = adapter();
+        let mut candidate = effect("delete", &["notes/file.txt"], None);
+        candidate.risk = RiskLevel::Low;
+        assert!(matches!(
+            adapter.validate(&candidate),
+            Err(AdapterError::InvalidEffect(_))
+        ));
+    }
+
+    #[test]
+    fn filesystem_conditions_cannot_read_outside_the_effect_scope() {
+        let (_temp, adapter) = adapter();
+        let mut candidate = effect("read", &["notes/allowed.txt"], None);
+        candidate.expected_postconditions = vec![Condition::FileSha256 {
+            path: "notes/private.txt".into(),
+            digest: "aa".repeat(32),
+        }];
+        assert!(matches!(
+            adapter.validate(&candidate),
+            Err(AdapterError::Containment(_))
+        ));
+
+        candidate.expected_postconditions.clear();
+        candidate.preconditions = vec![Condition::FileExists {
+            path: "notes/allowed.txt".into(),
+            expected: true,
+        }];
+        assert!(matches!(
+            adapter.validate(&candidate),
+            Err(AdapterError::InvalidEffect(_))
+        ));
+    }
+
+    #[test]
+    fn bounded_diff_truncates_unicode_at_a_character_boundary() {
+        let full = bounded_diff(
+            b"",
+            "\u{1f512}\n".as_bytes(),
+            "notes/unicode.txt",
+            usize::MAX,
+        )
+        .expect("UTF-8 input should produce a diff");
+        let inside_multibyte_character =
+            full.find('\u{1f512}').expect("diff should contain input") + 1;
+        let diff = bounded_diff(
+            b"",
+            "\u{1f512}\n".as_bytes(),
+            "notes/unicode.txt",
+            inside_multibyte_character,
+        )
+        .expect("UTF-8 input should produce a diff");
+
+        assert!(diff.ends_with("\n... diff truncated by Veyra ...\n"));
+        assert!(diff.len() <= inside_multibyte_character);
+        assert!(diff.is_char_boundary(diff.len()));
     }
 
     #[cfg(unix)]

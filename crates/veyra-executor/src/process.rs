@@ -16,15 +16,14 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::{io::AsyncReadExt, process::Command, sync::Mutex, time::timeout};
 use veyra_protocol::{
-    Condition, Effect, InputValue, Preview, ResourceScope, Reversibility, VerificationCheck,
+    Condition, Effect, InputValue, Preview, ResourceScope, Reversibility, RiskLevel,
+    VerificationCheck,
 };
 
 use crate::{
     AdapterContext, AdapterError, AdapterPreflight, AdapterRecovery, AdapterResult, EffectAdapter,
     SecretValue, StagedEffect,
-    util::{
-        no_unsupported_capability_constraints, public_string_array, redact_secret_text, sha256,
-    },
+    util::{public_string_array, redact_secret_text, sha256, validate_capability_constraints},
 };
 
 /// One exact executable, argument-vector, working-directory, and environment allowlist.
@@ -108,7 +107,7 @@ impl ProcessAdapter {
     }
 
     fn spec(&self, effect: &Effect) -> Result<ProcessSpec, AdapterError> {
-        no_unsupported_capability_constraints(effect, &[])?;
+        validate_capability_constraints(effect, &[])?;
         if !self.config.enabled {
             return Err(AdapterError::AdapterDisabled(self.name().into()));
         }
@@ -123,21 +122,7 @@ impl ProcessAdapter {
                 operation: effect.operation.clone(),
             });
         }
-        if effect.reversibility != Reversibility::Irreversible {
-            return Err(AdapterError::InvalidEffect(
-                "process execution must declare `irreversible`".into(),
-            ));
-        }
-        if effect.timeout_ms == 0 || effect.timeout_ms > self.config.maximum_timeout_ms {
-            return Err(AdapterError::Policy(
-                "effect timeout exceeds process adapter limit".into(),
-            ));
-        }
-        if effect.expected_postconditions.is_empty() {
-            return Err(AdapterError::InvalidEffect(
-                "process effect must declare at least one output or exit-code postcondition".into(),
-            ));
-        }
+        validate_process_contract(effect, self.config.maximum_timeout_ms)?;
         let ResourceScope::Process {
             executable,
             workdir,
@@ -236,7 +221,7 @@ impl EffectAdapter for ProcessAdapter {
         let spec = self.spec(effect)?;
         let executable_digest = Self::executable_digest(spec.executable.clone()).await?;
         Ok(AdapterPreflight {
-            preview: process_preview(&spec),
+            preview: process_preview(&spec, executable_digest.clone()),
             observations: json!({
                 "executable_sha256": executable_digest,
                 "shell_interpolation": false,
@@ -251,14 +236,15 @@ impl EffectAdapter for ProcessAdapter {
         _context: &AdapterContext,
     ) -> Result<StagedEffect, AdapterError> {
         let spec = self.spec(effect)?;
-        if effect.preview != process_preview(&spec) {
+        let executable_digest = Self::executable_digest(spec.executable.clone()).await?;
+        if effect.preview != process_preview(&spec, executable_digest.clone()) {
             return Err(AdapterError::Toctou(
-                "process preview changed before staging".into(),
+                "process executable or preview changed before staging".into(),
             ));
         }
         let stage = ProcessStage {
             spec_digest: process_spec_digest(&spec)?,
-            executable_digest: Self::executable_digest(spec.executable).await?,
+            executable_digest,
         };
         Ok(StagedEffect {
             adapter: self.name().into(),
@@ -285,66 +271,13 @@ impl EffectAdapter for ProcessAdapter {
             ));
         }
 
-        let mut command = Command::new(&spec.executable);
-        command
-            .args(&spec.arguments)
-            .current_dir(&spec.workdir)
-            .env_clear()
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let mut secrets = Vec::<SecretValue>::new();
-        for environment in &spec.environment {
-            let secret = context
-                .secrets
-                .resolve(&environment.provider, &environment.key)?;
-            let value = std::str::from_utf8(secret.expose()).map_err(|_| {
-                AdapterError::Policy("process environment secret must be UTF-8".into())
-            })?;
-            command.env(&environment.name, value);
-            secrets.push(secret);
-        }
-        let mut child = command.spawn().map_err(AdapterError::Process)?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AdapterError::Policy("process stdout was not captured".into()))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| AdapterError::Policy("process stderr was not captured".into()))?;
-        let capture = Arc::new(Mutex::new(OutputCapture::default()));
-        let future = async {
-            let status_future = child.wait();
-            let stdout_future = drain_output(
-                stdout,
-                capture.clone(),
-                OutputStream::Stdout,
-                self.config.maximum_output_bytes,
-            );
-            let stderr_future = drain_output(
-                stderr,
-                capture.clone(),
-                OutputStream::Stderr,
-                self.config.maximum_output_bytes,
-            );
-            let (status, (), ()) = tokio::try_join!(status_future, stdout_future, stderr_future)
-                .map_err(AdapterError::Process)?;
-            Ok::<_, AdapterError>(status)
-        };
-        let status = Box::pin(timeout(Duration::from_millis(effect.timeout_ms), future))
-            .await
-            .map_err(|_| AdapterError::Timeout)??;
-        let capture = Arc::try_unwrap(capture)
-            .map_err(|_| AdapterError::Policy("process output capture remained shared".into()))?
-            .into_inner();
-        if capture.exceeded {
-            return Err(AdapterError::SizeLimit {
-                kind: "process output",
-                limit: self.config.maximum_output_bytes,
-            });
-        }
+        let (status, capture, secrets) = run_process(
+            &spec,
+            context,
+            self.config.maximum_output_bytes,
+            effect.timeout_ms,
+        )
+        .await?;
         let mut stdout = String::from_utf8_lossy(&capture.stdout).into_owned();
         let mut stderr = String::from_utf8_lossy(&capture.stderr).into_owned();
         for secret in &secrets {
@@ -479,7 +412,6 @@ struct OutputCapture {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     total: usize,
-    exceeded: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -488,28 +420,141 @@ enum OutputStream {
     Stderr,
 }
 
+async fn run_process(
+    spec: &ProcessSpec,
+    context: &AdapterContext,
+    maximum_output_bytes: usize,
+    timeout_ms: u64,
+) -> Result<(std::process::ExitStatus, OutputCapture, Vec<SecretValue>), AdapterError> {
+    let mut command = Command::new(&spec.executable);
+    command
+        .args(&spec.arguments)
+        .current_dir(&spec.workdir)
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut secrets = Vec::<SecretValue>::new();
+    for environment in &spec.environment {
+        let secret = context
+            .secrets
+            .resolve(&environment.provider, &environment.key)?;
+        let value = std::str::from_utf8(secret.expose())
+            .map_err(|_| AdapterError::Policy("process environment secret must be UTF-8".into()))?;
+        command.env(&environment.name, value);
+        secrets.push(secret);
+    }
+    let mut child = command.spawn().map_err(AdapterError::Process)?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AdapterError::Policy("process stdout was not captured".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AdapterError::Policy("process stderr was not captured".into()))?;
+    let capture = Arc::new(Mutex::new(OutputCapture::default()));
+    let stdout_task = tokio::spawn(drain_output(
+        stdout,
+        capture.clone(),
+        OutputStream::Stdout,
+        maximum_output_bytes,
+    ));
+    let stderr_task = tokio::spawn(drain_output(
+        stderr,
+        capture.clone(),
+        OutputStream::Stderr,
+        maximum_output_bytes,
+    ));
+    let stdout_abort = stdout_task.abort_handle();
+    let stderr_abort = stderr_task.abort_handle();
+    let execution = async {
+        let output = async {
+            tokio::try_join!(
+                await_output_task(stdout_task, "stdout"),
+                await_output_task(stderr_task, "stderr")
+            )?;
+            Ok::<(), AdapterError>(())
+        };
+        tokio::pin!(output);
+        tokio::select! {
+            status = child.wait() => {
+                let status = status.map_err(AdapterError::Process)?;
+                output.await?;
+                Ok(status)
+            }
+            captured = &mut output => {
+                captured?;
+                child.wait().await.map_err(AdapterError::Process)
+            }
+        }
+    };
+    let status = match timeout(Duration::from_millis(timeout_ms), execution).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => {
+            stdout_abort.abort();
+            stderr_abort.abort();
+            terminate_and_reap(&mut child).await;
+            return Err(error);
+        }
+        Err(_) => {
+            stdout_abort.abort();
+            stderr_abort.abort();
+            terminate_and_reap(&mut child).await;
+            return Err(AdapterError::Timeout);
+        }
+    };
+    let capture = Arc::try_unwrap(capture)
+        .map_err(|_| AdapterError::Policy("process output capture remained shared".into()))?
+        .into_inner();
+    Ok((status, capture, secrets))
+}
+
+async fn await_output_task(
+    task: tokio::task::JoinHandle<Result<(), AdapterError>>,
+    stream: &'static str,
+) -> Result<(), AdapterError> {
+    task.await
+        .map_err(|_| AdapterError::Policy(format!("process {stream} capture task failed")))?
+}
+
+async fn terminate_and_reap(child: &mut tokio::process::Child) {
+    if child.try_wait().ok().flatten().is_none() {
+        let _ = child.kill().await;
+    }
+    let _ = child.wait().await;
+}
+
 async fn drain_output<R: tokio::io::AsyncRead + Unpin>(
     mut reader: R,
     capture: Arc<Mutex<OutputCapture>>,
     stream: OutputStream,
     limit: usize,
-) -> std::io::Result<()> {
+) -> Result<(), AdapterError> {
     let mut buffer = [0_u8; 8192];
     loop {
-        let read = reader.read(&mut buffer).await?;
+        let read = reader
+            .read(&mut buffer)
+            .await
+            .map_err(AdapterError::Process)?;
         if read == 0 {
             return Ok(());
         }
         let mut capture = capture.lock().await;
         let remaining = limit.saturating_sub(capture.total);
-        let stored = remaining.min(read);
+        if read > remaining {
+            return Err(AdapterError::SizeLimit {
+                kind: "process output",
+                limit,
+            });
+        }
         let target = match stream {
             OutputStream::Stdout => &mut capture.stdout,
             OutputStream::Stderr => &mut capture.stderr,
         };
-        target.extend_from_slice(&buffer[..stored]);
-        capture.total = capture.total.saturating_add(read);
-        capture.exceeded |= read > remaining;
+        target.extend_from_slice(&buffer[..read]);
+        capture.total += read;
     }
 }
 
@@ -569,9 +614,66 @@ fn valid_environment_name(name: &str) -> bool {
         && !name.as_bytes()[0].is_ascii_digit()
 }
 
-fn process_preview(spec: &ProcessSpec) -> Preview {
+fn validate_process_contract(effect: &Effect, maximum_timeout_ms: u64) -> Result<(), AdapterError> {
+    if effect.reversibility != Reversibility::Irreversible {
+        return Err(AdapterError::InvalidEffect(
+            "process execution must declare `irreversible`".into(),
+        ));
+    }
+    if effect.risk < RiskLevel::High {
+        return Err(AdapterError::InvalidEffect(
+            "process execution requires at least high risk".into(),
+        ));
+    }
+    if effect.timeout_ms == 0 || effect.timeout_ms > maximum_timeout_ms {
+        return Err(AdapterError::Policy(
+            "effect timeout exceeds process adapter limit".into(),
+        ));
+    }
+    if effect.expected_postconditions.is_empty() {
+        return Err(AdapterError::InvalidEffect(
+            "process effect must declare at least one output or exit-code postcondition".into(),
+        ));
+    }
+    if !effect.preconditions.is_empty() {
+        return Err(AdapterError::InvalidEffect(
+            "process preconditions are not implemented and cannot be declared".into(),
+        ));
+    }
+    if effect.expected_postconditions.iter().any(|condition| {
+        !matches!(condition, Condition::OutputSha256 { digest } if valid_sha256(digest))
+            && !matches!(condition, Condition::Custom { name, parameters }
+                if name == "veyra.process.exit_code/v1"
+                    && parameters.as_object().is_some_and(|parameters|
+                        parameters.len() == 1
+                            && parameters.get("expected").and_then(serde_json::Value::as_i64).is_some()))
+    }) {
+        return Err(AdapterError::InvalidEffect(
+            "process effect declares an unsupported or malformed postcondition".into(),
+        ));
+    }
+    if effect.inputs.iter().any(|(name, input)| match input {
+        InputValue::Public { .. } => name != "args",
+        InputValue::SecretRef { .. } => !name.starts_with("env:"),
+    }) {
+        return Err(AdapterError::InvalidEffect(
+            "process effect contains an unsupported input".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn process_preview(spec: &ProcessSpec, executable_sha256: String) -> Preview {
     Preview::Process {
         executable: spec.executable.to_string_lossy().into_owned(),
+        executable_sha256,
         args: spec.arguments.clone(),
         workdir: spec.workdir.to_string_lossy().into_owned(),
         environment_keys: spec
@@ -636,8 +738,9 @@ fn hash_file(path: &Path, limit: usize) -> Result<String, AdapterError> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, sync::Arc};
+    use std::{collections::BTreeMap, io::Write as _, sync::Arc};
 
+    use tempfile::TempDir;
     use veyra_protocol::{
         CapabilityRequirement, CausalParent, EffectId, IntentId, PROTOCOL_VERSION, PlanId,
         PrincipalId, RetryPolicy, RiskLevel, StepId, TransactionId, public,
@@ -725,6 +828,29 @@ mod tests {
             transaction_id: TransactionId::new(),
             secrets: Arc::new(DenySecretResolver),
         };
+        let mut understated = effect.clone();
+        understated.risk = RiskLevel::Low;
+        assert!(matches!(
+            adapter.validate(&understated),
+            Err(AdapterError::InvalidEffect(_))
+        ));
+        let mut unsupported = effect.clone();
+        unsupported.expected_postconditions = vec![Condition::FileExists {
+            path: "unrelated".into(),
+            expected: true,
+        }];
+        assert!(matches!(
+            adapter.validate(&unsupported),
+            Err(AdapterError::InvalidEffect(_))
+        ));
+        let mut unsupported_input = effect.clone();
+        unsupported_input
+            .inputs
+            .insert("ignored".into(), public("misleading"));
+        assert!(matches!(
+            adapter.validate(&unsupported_input),
+            Err(AdapterError::InvalidEffect(_))
+        ));
         effect.preview = adapter.preflight(&effect, &context).await.unwrap().preview;
         let staged = adapter.stage(&effect, &context).await.unwrap();
         let result = adapter.execute(&effect, &staged, &context).await.unwrap();
@@ -744,5 +870,91 @@ mod tests {
                 .unwrap()
                 .restored
         );
+
+        assert_one_byte_output_limit_is_enforced(&adapter, &effect, &context).await;
+    }
+
+    async fn assert_one_byte_output_limit_is_enforced(
+        adapter: &ProcessAdapter,
+        effect: &Effect,
+        context: &AdapterContext,
+    ) {
+        let mut output_limited = adapter.clone();
+        output_limited.config.maximum_output_bytes = 1;
+        let staged = output_limited.stage(effect, context).await.unwrap();
+        assert!(matches!(
+            output_limited.execute(effect, &staged, context).await,
+            Err(AdapterError::SizeLimit {
+                kind: "process output",
+                limit: 1
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn staging_rejects_an_executable_changed_after_preflight() {
+        let temporary = TempDir::new().unwrap();
+        let executable = temporary.path().join("allowed-test-executable");
+        std::fs::write(&executable, b"original executable bytes").unwrap();
+        let arguments = vec!["--list".into()];
+        let adapter =
+            ProcessAdapter::safe_demo(&executable, arguments.clone(), temporary.path()).unwrap();
+        let resource = ResourceScope::Process {
+            executable: executable.to_string_lossy().into_owned(),
+            workdir: temporary.path().to_string_lossy().into_owned(),
+        };
+        let mut effect = Effect {
+            schema_version: PROTOCOL_VERSION.into(),
+            id: EffectId::new(),
+            causal_parent: CausalParent {
+                intent_id: IntentId::new(),
+                plan_id: PlanId::new(),
+                step_id: StepId::new(),
+                effect_id: None,
+            },
+            principal_id: PrincipalId::new(),
+            adapter: "process".into(),
+            operation: "run".into(),
+            inputs: BTreeMap::from([("args".into(), public(json!(arguments)))]),
+            resource: resource.clone(),
+            preconditions: vec![],
+            expected_postconditions: vec![Condition::Custom {
+                name: "veyra.process.exit_code/v1".into(),
+                parameters: json!({"expected": 0}),
+            }],
+            risk: RiskLevel::High,
+            reversibility: Reversibility::Irreversible,
+            preview: Preview::Pending,
+            idempotency_key: "process-mutated-after-preview".into(),
+            timeout_ms: 5_000,
+            retry: RetryPolicy {
+                max_attempts: 1,
+                backoff_ms: 0,
+                retryable_errors: vec![],
+            },
+            required_capabilities: vec![CapabilityRequirement {
+                adapter: "process".into(),
+                operation: "run".into(),
+                resource,
+                constraints: BTreeMap::new(),
+            }],
+            inverse: None,
+        };
+        let context = AdapterContext {
+            transaction_id: TransactionId::new(),
+            secrets: Arc::new(DenySecretResolver),
+        };
+        effect.preview = adapter.preflight(&effect, &context).await.unwrap().preview;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&executable)
+            .unwrap()
+            .write_all(b"changed")
+            .unwrap();
+
+        assert!(matches!(
+            adapter.stage(&effect, &context).await,
+            Err(AdapterError::Toctou(_))
+        ));
     }
 }

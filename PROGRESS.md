@@ -152,3 +152,71 @@ de702be10b4fafeb741f89f953003a59450fe83715a7b7b2efc848df3a1825ac  target/release
 c2595f3ba15fe59444b835bab5103b2e9870436af090d57f77b080c97af3dbba  target/release/veyra-desktop.exe
 14c78673953130728232bbe3d5717ab437821183eb5fb8bec5f70d24bbdd3916  target/release/bundle/nsis/Veyra_0.1.0_x64-setup.exe
 ```
+
+## 2026-08-24 - deep feature audit and durable-state hardening
+
+- Moved authorization ahead of adapter observation, then reevaluated the exact preflighted effect.
+  Capability issuance now has semantic/size/time/use bounds, transaction and principal binding, and
+  virtual plan-wide use reservation. Each effect consumes capability uses, its optional approval
+  nonce, and matching audit evidence atomically; approval grant retry is idempotent for the same
+  approver and conflicting for a different one.
+- Bound transaction snapshots, immutable objects, capability content and mutable facts, approval
+  replay rows, stages, and idempotency rows to reserved audit events. Verification checks both
+  materialized-state-to-audit and audit-to-materialized-state directions, validates semantic event
+  shape, detects deletion and malformed stored JSON/timestamps, and holds the journal lock for the
+  complete verification pass. Receipt completion must authenticate the exact reserved effect.
+- Added hard-limited keyset pages for transactions, audit history/export, and recovery. Startup
+  recovery scans every bounded page. Transaction bundles now read transaction, protocol objects,
+  approvals, execution evidence, and events through one SQLite read snapshot; a concurrent-update
+  regression proves revisions cannot be mixed.
+- Tightened every bundled adapter contract: exact inputs, honest risk floors, supported
+  postconditions only, no unimplemented preconditions, no credential-shaped public data, canonical
+  SHA-256/resource text, and fail-closed third-party capability caveats. Filesystem diffs preserve
+  UTF-8 within their exact byte budget. Process approval binds executable bytes; output overflow or
+  timeout actively aborts readers and terminates/reaps the child.
+- Added bounded paged API, CLI, and TypeScript SDK surfaces; safe same-origin CLI URL construction;
+  typed path IDs; bearer challenges; no-store/nosniff responses; token-redacted, control-safe client
+  errors; and Unicode-aware truncation. The desktop progressively loads older records, prevents a
+  stale bundle response from replacing the current selection, and renders failed journal
+  verification as a persistent integrity alert.
+- Expanded the adversarial catalog from 39 to 64 scenarios. A focused verbose desktop eval gate
+  makes the UI race probe observable instead of inferring it from an aggregate test count.
+
+Final gates passed on this Windows host using the GNU Rust toolchain:
+
+```text
+$env:VEYRA_RUST_TOOLCHAIN = "stable-x86_64-pc-windows-gnu"; .\scripts\verify.ps1
+cargo +stable-x86_64-pc-windows-gnu build --release -p veyra-cli -p veyra-server --locked
+$env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-gnu"; corepack pnpm desktop:build
+VEYRA_E2E_TOKEN_FILE=<absolute-token-path> corepack pnpm --filter @veyra/desktop test:e2e
+```
+
+The complete workspace run passed 109 Rust tests and 15 JavaScript/TypeScript/UI tests, generated
+and checked all 16 protocol schemas, built production web assets, and passed Rust and production
+JavaScript dependency policy checks. The eval result is 63 passed, 1 environment-limited, and 0
+failed; EV-008 remains the documented unprivileged-Windows symlink-fixture limitation and runs on
+Linux CI. The deterministic demo committed one effect, authenticated one receipt, passed one
+verification, checked 39 audit events, rolled back, and removed the workspace file.
+
+The live Microsoft Edge release-daemon flow passed in 23.4 seconds at 1440x900 and 760x900. It
+created, preflighted, approved, executed, verified, inspected, and rolled back a real transaction.
+The approval, narrow, and committed screenshots were inspected directly; no horizontal overflow,
+clipped control, hidden primary action, or evidence-hierarchy defect was found.
+
+Local unsigned release artifact SHA-256 values are:
+
+```text
+c1dec48f1789165755151bf5341ebf49d9b41aadb7a36bcd2740656012f579c9  target/release/veyra.exe
+ae891ea858daf9e11670b8d2a38baa59bef7f3d9906ab5e200b8d9b163435fe0  target/release/veyra-server.exe
+2e77c4b48dbb641ce166674dcc33a371d0d53e92236e959dbddd364de1c24a10  target/release/veyra-desktop.exe
+a69ca0df3a6b80b90f7a874cd0fce4a04c4b49cef51fb80add39011c02fb10ad  target/release/bundle/nsis/Veyra_0.1.0_x64-setup.exe
+```
+
+The honest V0.1 boundary remains local and single-daemon: the bearer is administrative root for one
+OS account, registered in-process adapters are trusted code, and a privileged attacker can rewrite
+both SQLite and its local anchor. Unknown external crash outcomes still require manual recovery;
+authority consumption is atomic per effect rather than across a whole multi-effect plan; process
+replacement between the final digest and spawn remains an OS-call race; protocol preconditions are
+reserved but rejected; retained staging artifacts need lifecycle policy; and the remaining
+per-transaction/high-volume verification paths still need streaming pagination before very large
+journals.

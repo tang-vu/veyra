@@ -9,7 +9,7 @@ use thiserror::Error;
 use tokio::net::TcpListener;
 
 pub use api::{
-    ApiState, AuditTextExport, DemoSeed, DemoSeedRequest, GrantApprovalRequest,
+    ApiPage, ApiState, AuditTextExport, DemoSeed, DemoSeedRequest, GrantApprovalRequest,
     IssueCapabilityRequest, RevokeCapabilityRequest, TransactionBundle, router,
 };
 pub use config::{
@@ -90,6 +90,13 @@ mod tests {
 
         let unauthorized = client.get(format!("{root}/health")).send().await.unwrap();
         assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            unauthorized
+                .headers()
+                .get(reqwest::header::WWW_AUTHENTICATE)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer realm=\"veyra\"")
+        );
         assert_eq!(
             unauthorized
                 .headers()
@@ -179,6 +186,51 @@ mod tests {
             .await
             .unwrap();
         assert!(verification.valid);
+        let transactions: ApiPage<veyra_protocol::Transaction> = client
+            .get(format!("{root}/transactions/page?limit=1"))
+            .bearer_auth(&*instance.token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(transactions.items.len(), 1);
+        let events: ApiPage<veyra_protocol::AuditEvent> = client
+            .get(format!("{root}/audit/events/page?limit=2"))
+            .bearer_auth(&*instance.token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(events.items.len(), 2);
+        assert!(events.items[0].sequence > events.items[1].sequence);
+        assert!(events.next_cursor.is_some());
+        let recovery: ApiPage<veyra_journal::RecoveryRecord> = client
+            .get(format!("{root}/recovery/page?limit=2"))
+            .bearer_auth(&*instance.token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(recovery.items.is_empty());
+        let invalid_page = client
+            .get(format!("{root}/audit/events/page?limit=2&cursor=invalid"))
+            .bearer_auth(&*instance.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(invalid_page.status(), StatusCode::BAD_REQUEST);
         server.abort();
     }
 }

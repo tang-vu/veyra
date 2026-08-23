@@ -96,7 +96,7 @@
       ]
     },
     "Condition": {
-      "description": "A typed condition evaluated before or after execution.",
+      "description": "A typed condition vocabulary reserved for preconditions and evaluated for postconditions.\n\nThe V0.1 kernel rejects non-empty precondition lists until adapters have a versioned evaluation\ncontract; supported postconditions are still evaluated after execution.",
       "oneOf": [
         {
           "description": "A relative filesystem path must exist or not exist.",
@@ -262,7 +262,7 @@
           "type": "string"
         },
         "preconditions": {
-          "description": "Preconditions rechecked immediately before execution.",
+          "description": "Reserved preconditions. The V0.1 kernel rejects non-empty values until an explicit\nadapter evaluation contract is available.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Condition"
@@ -539,6 +539,10 @@
               "description": "Exact executable.",
               "type": "string"
             },
+            "executable_sha256": {
+              "description": "SHA-256 of the executable bytes observed during preflight.",
+              "type": "string"
+            },
             "kind": {
               "type": "string",
               "const": "process"
@@ -552,6 +556,7 @@
           "required": [
             "kind",
             "executable",
+            "executable_sha256",
             "args",
             "workdir",
             "environment_keys"

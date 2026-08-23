@@ -95,7 +95,15 @@ pub(crate) fn no_secret_inputs(inputs: &EffectInputs) -> Result<(), AdapterError
     }
 }
 
-pub(crate) fn no_unsupported_capability_constraints(
+/// Reject any effect capability caveat that neither the kernel nor this adapter can enforce.
+///
+/// Pass only the names of adapter-specific constraints whose semantics the caller actually checks.
+/// Kernel-wide timeout, risk, and irreversibility constraints are recognized automatically.
+///
+/// # Errors
+///
+/// Returns [`AdapterError::InvalidEffect`] for the first unsupported constraint.
+pub fn validate_capability_constraints(
     effect: &Effect,
     adapter_specific: &[&str],
 ) -> Result<(), AdapterError> {

@@ -19,6 +19,7 @@ pub use filesystem::{FilesystemAdapter, FilesystemConfig};
 pub use http::{HttpAdapter, HttpAdapterConfig, HttpRule};
 pub use process::{ProcessAdapter, ProcessAdapterConfig, ProcessRule};
 pub use secret::{DenySecretResolver, EnvironmentSecretResolver, SecretResolver, SecretValue};
+pub use util::validate_capability_constraints;
 
 /// Immutable context supplied by the trusted kernel to every adapter call.
 #[derive(Clone)]

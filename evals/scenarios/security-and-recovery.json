@@ -309,5 +309,205 @@
     "gate": "rust",
     "probe": "response_headers_are_bounded_before_receipt_persistence",
     "expected": "size_limit"
+  },
+  {
+    "id": "EV-040",
+    "category": "preview_bounds",
+    "title": "Unicode diffs remain valid UTF-8 and inside their exact byte limit",
+    "gate": "rust",
+    "probe": "bounded_diff_truncates_unicode_at_a_character_boundary",
+    "expected": "bounded_valid_utf8"
+  },
+  {
+    "id": "EV-041",
+    "category": "process_toctou",
+    "title": "An executable changed after approval is rejected before spawn",
+    "gate": "rust",
+    "probe": "staging_rejects_an_executable_changed_after_preflight",
+    "expected": "digest_mismatch"
+  },
+  {
+    "id": "EV-042",
+    "category": "risk_understatement",
+    "title": "Mutating filesystem effects cannot claim low risk",
+    "gate": "rust",
+    "probe": "mutating_filesystem_effects_cannot_understate_risk",
+    "expected": "invalid_effect"
+  },
+  {
+    "id": "EV-043",
+    "category": "risk_understatement",
+    "title": "Mutating HTTP effects cannot understate risk",
+    "gate": "rust",
+    "probe": "mutating_http_effects_cannot_understate_risk",
+    "expected": "invalid_effect"
+  },
+  {
+    "id": "EV-044",
+    "category": "journal_tamper",
+    "title": "Transaction snapshots are content-bound to audit evidence",
+    "gate": "rust",
+    "probe": "transaction_snapshot_is_bound_to_the_audit_chain",
+    "expected": "corruption_detected"
+  },
+  {
+    "id": "EV-045",
+    "category": "capability_tamper",
+    "title": "Capability content, uses, and revocation facts are audit-bound",
+    "gate": "rust",
+    "probe": "capability_content_and_mutable_facts_are_bound_to_the_audit_chain",
+    "expected": "corruption_detected"
+  },
+  {
+    "id": "EV-046",
+    "category": "authority_atomicity",
+    "title": "Approval replay rolls back capability consumption atomically",
+    "gate": "rust",
+    "probe": "replay_rolls_back_capability_consumption_and_nonce_rows_are_audit_bound",
+    "expected": "all_or_nothing"
+  },
+  {
+    "id": "EV-047",
+    "category": "journal_tamper",
+    "title": "Immutable object content is audit-bound",
+    "gate": "rust",
+    "probe": "immutable_object_digest_is_checked_when_loaded",
+    "expected": "corruption_detected"
+  },
+  {
+    "id": "EV-048",
+    "category": "journal_tamper",
+    "title": "Staged effect descriptors are audit-bound",
+    "gate": "rust",
+    "probe": "staged_effect_content_is_bound_to_the_audit_chain",
+    "expected": "corruption_detected"
+  },
+  {
+    "id": "EV-049",
+    "category": "idempotency_tamper",
+    "title": "Idempotency state deletion or mutation is detected",
+    "gate": "rust",
+    "probe": "idempotency_state_is_audit_bound_and_deletion_is_detected",
+    "expected": "corruption_detected"
+  },
+  {
+    "id": "EV-050",
+    "category": "pagination",
+    "title": "Transaction and audit keyset pages are bounded and resumable",
+    "gate": "rust",
+    "probe": "keyset_pages_are_bounded_stable_and_resumable",
+    "expected": "bounded_complete_scan"
+  },
+  {
+    "id": "EV-051",
+    "category": "journal_tamper",
+    "title": "Malformed audit envelopes return an explicit invalid verification",
+    "gate": "rust",
+    "probe": "malformed_audit_envelopes_are_reported_as_failed_verification",
+    "expected": "invalid_verification"
+  },
+  {
+    "id": "EV-052",
+    "category": "model_output",
+    "title": "Raw credential-shaped inputs and unevaluated conditions fail closed",
+    "gate": "rust",
+    "probe": "planner_inputs_and_conditions_fail_closed_before_adapter_access",
+    "expected": "plan_rejected"
+  },
+  {
+    "id": "EV-053",
+    "category": "capability_escalation",
+    "title": "Filesystem postconditions cannot observe paths outside effect scope",
+    "gate": "rust",
+    "probe": "filesystem_conditions_cannot_read_outside_the_effect_scope",
+    "expected": "containment_error"
+  },
+  {
+    "id": "EV-054",
+    "category": "capability_budget",
+    "title": "A one-use capability cannot be overbooked across plan effects",
+    "gate": "rust",
+    "probe": "one_use_capability_cannot_be_overbooked_across_a_plan",
+    "expected": "later_effect_denied"
+  },
+  {
+    "id": "EV-055",
+    "category": "recovery_scaling",
+    "title": "Startup recovery scans multiple bounded pages",
+    "gate": "rust",
+    "probe": "restart_recovery_scans_more_than_one_bounded_page",
+    "expected": "all_active_transactions_classified"
+  },
+  {
+    "id": "EV-056",
+    "category": "cli_injection",
+    "title": "CLI IDs and error text cannot redirect authority or inject terminal controls",
+    "gate": "rust",
+    "probe": "typed_ids_and_error_rendering_reject_terminal_or_url_injection",
+    "expected": "rejected_and_redacted"
+  },
+  {
+    "id": "EV-057",
+    "category": "journal_tamper",
+    "title": "Malformed snapshot JSON returns an explicit invalid verification",
+    "gate": "rust",
+    "probe": "malformed_snapshot_json_is_reported_as_failed_verification",
+    "expected": "invalid_verification"
+  },
+  {
+    "id": "EV-058",
+    "category": "api_authentication",
+    "title": "The real API requires bearer auth and advertises the challenge safely",
+    "gate": "rust",
+    "probe": "authenticated_api_runs_the_real_reversible_demo",
+    "expected": "unauthorized_then_authenticated"
+  },
+  {
+    "id": "EV-059",
+    "category": "read_consistency",
+    "title": "Grouped evidence reads remain on one snapshot during concurrent updates",
+    "gate": "rust",
+    "probe": "grouped_reads_hold_one_snapshot_across_concurrent_updates",
+    "expected": "single_revision_snapshot"
+  },
+  {
+    "id": "EV-060",
+    "category": "ui_concurrency",
+    "title": "A late transaction response cannot overwrite the current inspector selection",
+    "gate": "desktop",
+    "probe": "stale bundle responses cannot overwrite a newer transaction selection",
+    "expected": "latest_selection_preserved"
+  },
+  {
+    "id": "EV-061",
+    "category": "journal_tamper",
+    "title": "Audit evidence detects deleted transaction and capability materialized state",
+    "gate": "rust",
+    "probe": "deleted_transaction_and_capability_snapshots_are_detected_from_audit_evidence",
+    "expected": "missing_state_detected"
+  },
+  {
+    "id": "EV-062",
+    "category": "journal_binding",
+    "title": "Generic audit events cannot shadow reserved durable-state bindings",
+    "gate": "rust",
+    "probe": "generic_events_cannot_shadow_reserved_state_bindings",
+    "expected": "reserved_namespace_rejected"
+  },
+  {
+    "id": "EV-063",
+    "category": "idempotency_binding",
+    "title": "Idempotency completion rejects a valid receipt for different effect content",
+    "gate": "rust",
+    "probe": "idempotency_completion_rejects_a_receipt_for_another_effect",
+    "expected": "digest_mismatch_rejected"
+  },
+  {
+    "id": "EV-064",
+    "category": "canonical_input",
+    "title": "Resource identifiers and SHA-256 fields require canonical control-safe text",
+    "gate": "rust",
+    "probe": "resource_identifiers_and_digests_require_canonical_safe_text",
+    "expected": "noncanonical_input_rejected"
   }
 ]

@@ -18,9 +18,10 @@ use veyra_journal::{CapabilityFacts, IdempotencyReservation, Journal, JournalErr
 use veyra_policy::{CapabilityStatus, PolicyEngine, PolicyError, resource_covers};
 use veyra_protocol::{
     ApprovalGrant, ApprovalRequest, ApprovalRequestId, Capability, CapabilityId, Compensation,
-    CompensationId, Effect, EffectId, Execution, ExecutionId, InputValue, Intent, PROTOCOL_VERSION,
-    Plan, PolicyDecision, PolicyOutcome, Principal, PrincipalId, PrincipalKind, Receipt, ReceiptId,
-    Transaction, TransactionId, TransactionState, Verification, VerificationId, canonical_digest,
+    CompensationId, Condition, Effect, EffectId, EffectInputs, Execution, ExecutionId, InputValue,
+    Intent, PROTOCOL_VERSION, Plan, PolicyDecision, PolicyOutcome, Principal, PrincipalId,
+    PrincipalKind, Receipt, ReceiptId, ResourceScope, Transaction, TransactionId, TransactionState,
+    Verification, VerificationId, canonical_digest,
 };
 
 use crate::{Planner, PlannerError, StateMachine, TransitionError};
@@ -32,8 +33,20 @@ pub struct KernelConfig {
     pub maximum_intent_bytes: usize,
     /// Maximum serialized proposal bytes accepted from an untrusted planner.
     pub maximum_plan_bytes: usize,
+    /// Maximum resource scopes accepted in one intent envelope.
+    pub maximum_intent_resources: usize,
+    /// Maximum top-level context entries accepted in one intent.
+    pub maximum_intent_context_entries: usize,
+    /// Maximum ordered steps accepted in one proposal.
+    pub maximum_steps_per_plan: usize,
     /// Maximum number of effects accepted in one proposal.
     pub maximum_effects_per_plan: usize,
+    /// Maximum public/secret-ref input entries accepted in one effect.
+    pub maximum_inputs_per_effect: usize,
+    /// Maximum declared postconditions accepted in one effect. V0.1 rejects preconditions.
+    pub maximum_conditions_per_effect: usize,
+    /// Maximum capability requirements accepted in one effect.
+    pub maximum_requirements_per_effect: usize,
     /// Lifetime of approval challenges.
     pub approval_request_lifetime: Duration,
     /// Lifetime of grants created through the local API.
@@ -44,6 +57,18 @@ pub struct KernelConfig {
     pub maximum_staged_effect_bytes: usize,
     /// Maximum canonical preview, verification, or recovery evidence bytes from an adapter.
     pub maximum_adapter_evidence_bytes: usize,
+    /// Maximum serialized bytes in one issued capability.
+    pub maximum_capability_bytes: usize,
+    /// Maximum remaining lifetime accepted for a newly issued capability.
+    pub maximum_capability_lifetime: Duration,
+    /// Maximum use count accepted for one capability.
+    pub maximum_capability_uses: u32,
+    /// Maximum operation entries accepted in one capability.
+    pub maximum_capability_operations: usize,
+    /// Maximum resource entries accepted in one capability.
+    pub maximum_capability_resources: usize,
+    /// Maximum constraint entries accepted in one capability.
+    pub maximum_capability_constraints: usize,
 }
 
 impl Default for KernelConfig {
@@ -51,12 +76,24 @@ impl Default for KernelConfig {
         Self {
             maximum_intent_bytes: 2 * 1024 * 1024,
             maximum_plan_bytes: 2 * 1024 * 1024,
+            maximum_intent_resources: 64,
+            maximum_intent_context_entries: 256,
+            maximum_steps_per_plan: 64,
             maximum_effects_per_plan: 16,
+            maximum_inputs_per_effect: 128,
+            maximum_conditions_per_effect: 128,
+            maximum_requirements_per_effect: 64,
             approval_request_lifetime: Duration::minutes(10),
             approval_grant_lifetime: Duration::minutes(5),
             maximum_adapter_result_bytes: 2 * 1024 * 1024,
             maximum_staged_effect_bytes: 2 * 1024 * 1024,
             maximum_adapter_evidence_bytes: 2 * 1024 * 1024,
+            maximum_capability_bytes: 256 * 1024,
+            maximum_capability_lifetime: Duration::hours(24),
+            maximum_capability_uses: 1_024,
+            maximum_capability_operations: 32,
+            maximum_capability_resources: 64,
+            maximum_capability_constraints: 32,
         }
     }
 }
@@ -111,52 +148,61 @@ impl Kernel {
     /// Returns [`KernelError`] if persisted snapshots cannot be loaded or a recovery transition
     /// cannot be durably journaled.
     pub fn recover_after_restart(&self) -> Result<(), KernelError> {
-        for mut transaction in self.journal.transactions()? {
-            match transaction.state {
-                TransactionState::Draft => self.transition(
-                    &mut transaction,
-                    TransactionState::Cancelled,
-                    "transaction.restart_cancelled",
-                    json!({"reason_code": "planning_not_durable"}),
-                )?,
-                TransactionState::Preflighted => self.transition(
-                    &mut transaction,
-                    TransactionState::Failed,
-                    "transaction.restart_failed",
-                    json!({"reason_code": "preflight_finalization_incomplete"}),
-                )?,
-                TransactionState::Staged
-                | TransactionState::Executing
-                | TransactionState::Verifying
-                | TransactionState::Compensating => {
-                    let previous = transaction.state;
-                    let revision = transaction.revision;
-                    StateMachine::require_manual_recovery(
+        let mut cursor = None;
+        loop {
+            let page = self.journal.recovery_action_page(500, cursor.as_deref())?;
+            for record in page.items {
+                let mut transaction = self.journal.transaction(record.transaction_id)?;
+                match transaction.state {
+                    TransactionState::Draft => self.transition(
                         &mut transaction,
-                        revision,
-                        format!("daemon restarted during {previous:?}"),
-                    )?;
-                    self.journal.update_transaction(
-                        &transaction,
-                        "transaction.restart_manual_recovery",
-                        None,
-                        json!({
-                            "previous_state": previous,
-                            "reason_code": "restart_boundary_ambiguous",
-                        }),
-                    )?;
+                        TransactionState::Cancelled,
+                        "transaction.restart_cancelled",
+                        json!({"reason_code": "planning_not_durable"}),
+                    )?,
+                    TransactionState::Preflighted => self.transition(
+                        &mut transaction,
+                        TransactionState::Failed,
+                        "transaction.restart_failed",
+                        json!({"reason_code": "preflight_finalization_incomplete"}),
+                    )?,
+                    TransactionState::Staged
+                    | TransactionState::Executing
+                    | TransactionState::Verifying
+                    | TransactionState::Compensating => {
+                        let previous = transaction.state;
+                        let revision = transaction.revision;
+                        StateMachine::require_manual_recovery(
+                            &mut transaction,
+                            revision,
+                            format!("daemon restarted during {previous:?}"),
+                        )?;
+                        self.journal.update_transaction(
+                            &transaction,
+                            "transaction.restart_manual_recovery",
+                            None,
+                            json!({
+                                "previous_state": previous,
+                                "reason_code": "restart_boundary_ambiguous",
+                            }),
+                        )?;
+                    }
+                    TransactionState::Planned
+                    | TransactionState::AwaitingApproval
+                    | TransactionState::Approved
+                    | TransactionState::Committed
+                    | TransactionState::Denied
+                    | TransactionState::Failed
+                    | TransactionState::RolledBack
+                    | TransactionState::PartiallyCompensated
+                    | TransactionState::Cancelled
+                    | TransactionState::ManualRecovery => {}
                 }
-                TransactionState::Planned
-                | TransactionState::AwaitingApproval
-                | TransactionState::Approved
-                | TransactionState::Committed
-                | TransactionState::Denied
-                | TransactionState::Failed
-                | TransactionState::RolledBack
-                | TransactionState::PartiallyCompensated
-                | TransactionState::Cancelled
-                | TransactionState::ManualRecovery => {}
             }
+            let Some(next) = page.next_cursor else {
+                break;
+            };
+            cursor = Some(next);
         }
         Ok(())
     }
@@ -167,9 +213,9 @@ impl Kernel {
     ///
     /// Returns [`KernelError`] if fields are invalid or the ID already has different content.
     pub fn register_principal(&self, principal: &Principal) -> Result<(), KernelError> {
-        if principal.display_name.trim().is_empty() || principal.display_name.len() > 128 {
+        if !valid_human_text(&principal.display_name, 128) {
             return Err(KernelError::InvalidInput(
-                "principal display name must contain 1..=128 characters".into(),
+                "principal display name must be safe text within 1..=128 bytes".into(),
             ));
         }
         self.journal
@@ -205,22 +251,15 @@ impl Kernel {
         let _: Principal = self
             .journal
             .get_object("principal", &capability.principal_id.to_string())?;
-        if capability.operations.is_empty()
-            || capability.resources.is_empty()
-            || capability.max_uses == 0
-            || capability.nonce.trim().is_empty()
-            || capability.not_before >= capability.expires_at
-            || capability.expires_at <= Utc::now()
-            || capability.issued_at > Utc::now() + Duration::seconds(5)
-        {
-            return Err(KernelError::InvalidInput(
-                "capability has empty authority, invalid use count, nonce, or time bounds".into(),
-            ));
-        }
+        validate_capability(capability, &self.config, Utc::now())?;
         let _ = self.adapters.get(&capability.adapter)?;
-        if let Some(intent_id) = capability.intent_id {
-            let _: Intent = self.journal.get_object("intent", &intent_id.to_string())?;
-        }
+        let mut bound_intent = capability
+            .intent_id
+            .map(|intent_id| {
+                self.journal
+                    .get_object::<Intent>("intent", &intent_id.to_string())
+            })
+            .transpose()?;
         if let Some(transaction_id) = capability.transaction_id {
             let transaction = self.journal.transaction(transaction_id)?;
             if capability
@@ -231,24 +270,22 @@ impl Kernel {
                     "capability intent and transaction bindings disagree".into(),
                 ));
             }
+            if bound_intent.is_none() {
+                bound_intent = Some(
+                    self.journal
+                        .get_object("intent", &transaction.intent_id.to_string())?,
+                );
+            }
         }
-        self.journal.store_capability(capability)?;
-        self.journal.append_event(
-            capability.transaction_id,
-            "capability.issued",
-            Some(&issuer_id.to_string()),
-            json!({
-                "capability_id": capability.id,
-                "principal_id": capability.principal_id,
-                "intent_id": capability.intent_id,
-                "transaction_id": capability.transaction_id,
-                "adapter": capability.adapter,
-                "operations": capability.operations,
-                "resources": capability.resources,
-                "expires_at": capability.expires_at,
-                "max_uses": capability.max_uses,
-            }),
-        )?;
+        if bound_intent
+            .as_ref()
+            .is_some_and(|intent| intent.principal_id != capability.principal_id)
+        {
+            return Err(KernelError::InvalidInput(
+                "capability principal disagrees with its intent or transaction binding".into(),
+            ));
+        }
+        self.journal.store_capability(capability, issuer_id)?;
         Ok(())
     }
 
@@ -271,13 +308,7 @@ impl Kernel {
                 "only a registered human principal may revoke capabilities".into(),
             ));
         }
-        self.journal.revoke_capability(capability_id)?;
-        self.journal.append_event(
-            None,
-            "capability.revoked",
-            Some(&revoker_id.to_string()),
-            json!({"capability_id": capability_id, "revoker_id": revoker_id}),
-        )?;
+        self.journal.revoke_capability(capability_id, revoker_id)?;
         Ok(())
     }
 
@@ -288,7 +319,7 @@ impl Kernel {
     /// Returns [`KernelError`] for unknown principals, unsafe intent context, planner failure,
     /// invalid plan shape/scope, adapter rejection, or persistence failure.
     pub async fn submit_intent(&self, intent: Intent) -> Result<Submission, KernelError> {
-        validate_intent(&intent, self.config.maximum_intent_bytes)?;
+        validate_intent(&intent, &self.config)?;
         let _: Principal = self
             .journal
             .get_object("principal", &intent.principal_id.to_string())?;
@@ -404,9 +435,42 @@ impl Kernel {
         transaction: &Transaction,
         plan: &mut Plan,
     ) -> Result<Vec<PolicyDecision>, KernelError> {
-        let (capabilities, statuses) = self.policy_inputs()?;
+        let principal_id = effects(plan)
+            .first()
+            .ok_or_else(|| KernelError::InvalidPlan("plan contains no effects".into()))?
+            .principal_id;
+        let (capabilities, mut statuses) = self.policy_inputs(principal_id)?;
         let mut decisions = Vec::new();
         for effect in effects_mut(plan) {
+            let preliminary = self.policy.evaluate(
+                effect,
+                transaction.id,
+                transaction.intent_id,
+                &capabilities,
+                &statuses,
+                Utc::now(),
+            );
+            if preliminary.outcome == PolicyOutcome::Deny {
+                self.journal.put_object(
+                    "policy_decision",
+                    &preliminary.id.to_string(),
+                    &preliminary,
+                )?;
+                self.journal.append_event(
+                    Some(transaction.id),
+                    "effect.preflight_denied",
+                    Some(&effect.id.to_string()),
+                    json!({
+                        "effect_id": effect.id,
+                        "effect_digest": preliminary.effect_digest,
+                        "policy_outcome": preliminary.outcome,
+                        "policy_decision_id": preliminary.id,
+                        "reason_code": "authority_required_before_observation",
+                    }),
+                )?;
+                decisions.push(preliminary);
+                continue;
+            }
             let adapter = self.adapters.get(&effect.adapter)?;
             let preflight = adapter
                 .preflight(effect, &self.adapter_context(transaction.id))
@@ -437,6 +501,7 @@ impl Kernel {
                     "policy_decision_id": decision.id,
                 }),
             )?;
+            reserve_capability_uses(&mut statuses, &decision.capability_ids)?;
             decisions.push(decision);
         }
         Ok(decisions)
@@ -484,6 +549,7 @@ impl Kernel {
     ///
     /// Returns [`KernelError`] for a non-human approver, expired/mutated/replayed challenge,
     /// duplicate grant, invalid state, or persistence failure.
+    #[allow(clippy::too_many_lines)]
     pub async fn grant_approval(
         &self,
         request_id: ApprovalRequestId,
@@ -494,7 +560,16 @@ impl Kernel {
             .get_object("approval_request", &request_id.to_string())?;
         let _guard = self.operation_guard(request.transaction_id).await?;
         let mut transaction = self.journal.transaction(request.transaction_id)?;
-        require_state(&transaction, TransactionState::AwaitingApproval)?;
+        if !matches!(
+            transaction.state,
+            TransactionState::AwaitingApproval | TransactionState::Approved
+        ) {
+            return Err(KernelError::InvalidState {
+                transaction_id: transaction.id,
+                expected: "awaiting approval or approved".into(),
+                actual: transaction.state,
+            });
+        }
         let approver: Principal = self
             .journal
             .get_object("principal", &approver_id.to_string())?;
@@ -503,19 +578,49 @@ impl Kernel {
                 "approval requires a registered human principal".into(),
             ));
         }
-        if self
+        let existing_grants = self
             .journal
-            .objects::<ApprovalGrant>("approval_grant")?
-            .iter()
-            .any(|grant| grant.request_id == request.id)
-        {
-            return Err(KernelError::AlreadyApproved(request.id));
-        }
+            .objects_for_transaction::<ApprovalGrant>("approval_grant", request.transaction_id)?;
         let plan: Plan = self
             .journal
             .get_object("preflighted_plan", &transaction.plan_id.to_string())?;
         let effect = effect_by_id(&plan, request.effect_id)?;
         let now = Utc::now();
+        if let Some(existing) = existing_grants
+            .iter()
+            .find(|grant| grant.request_id == request.id)
+        {
+            if existing.approver_id != approver_id {
+                return Err(KernelError::AlreadyApproved(request.id));
+            }
+            self.policy.verify_approval(
+                &request,
+                existing,
+                effect,
+                transaction.id,
+                &self.consumed_nonce_set(&existing.nonce)?,
+                now,
+            )?;
+            let all_effects_approved = self.all_approvals_live(&transaction, &plan, now)?;
+            if transaction.state == TransactionState::AwaitingApproval && all_effects_approved {
+                self.transition(
+                    &mut transaction,
+                    TransactionState::Approved,
+                    "transaction.approved",
+                    json!({"approver_id": approver_id, "resumed_existing_grant": true}),
+                )?;
+            }
+            return Ok(ApprovalOutcome {
+                grant: existing.clone(),
+                transaction,
+                all_effects_approved,
+            });
+        }
+        if transaction.state == TransactionState::Approved {
+            return Err(KernelError::Invariant(
+                "approved transaction is missing a required approval grant".into(),
+            ));
+        }
         let remaining = request.expires_at - now;
         let lifetime = self.config.approval_grant_lifetime.min(remaining);
         let grant = PolicyEngine::grant(&request, approver_id, now, lifetime)?;
@@ -524,7 +629,7 @@ impl Kernel {
             &grant,
             effect,
             transaction.id,
-            &self.journal.consumed_approval_nonces()?,
+            &self.consumed_nonce_set(&grant.nonce)?,
             now,
         )?;
         self.journal.store_approval_grant(&grant)?;
@@ -964,6 +1069,7 @@ impl Kernel {
     }
 
     fn validate_plan(&self, intent: &Intent, plan: &Plan) -> Result<(), KernelError> {
+        let now = Utc::now();
         let effect_count = plan
             .steps
             .iter()
@@ -971,6 +1077,10 @@ impl Kernel {
         if plan.schema_version != PROTOCOL_VERSION
             || plan.intent_id != intent.id
             || plan.steps.is_empty()
+            || plan.steps.len() > self.config.maximum_steps_per_plan
+            || !valid_code(&plan.planner, 256)
+            || plan.created_at > now + Duration::seconds(5)
+            || plan.created_at + Duration::seconds(5) < intent.created_at
             || effect_count.is_none_or(|count| count > self.config.maximum_effects_per_plan)
         {
             return Err(KernelError::InvalidPlan(
@@ -999,9 +1109,12 @@ impl Kernel {
         let mut effect_ids = HashSet::new();
         let mut idempotency_keys = HashSet::new();
         for step in &plan.steps {
-            if !step_ids.insert(step.id) || step.effects.is_empty() {
+            if !step_ids.insert(step.id)
+                || !valid_human_text(&step.summary, 4_096)
+                || step.effects.is_empty()
+            {
                 return Err(KernelError::InvalidPlan(
-                    "step IDs must be unique and each step needs effects".into(),
+                    "step IDs and summaries must be valid and each step needs effects".into(),
                 ));
             }
             for effect in &step.effects {
@@ -1015,7 +1128,19 @@ impl Kernel {
                     })
                     || effect.principal_id != intent.principal_id
                     || !matches!(effect.preview, veyra_protocol::Preview::Pending)
+                    || effect.inputs.len() > self.config.maximum_inputs_per_effect
+                    || !effect.inputs.keys().all(|key| valid_public_key(key, 256))
+                    || !effect_inputs_are_safe(&effect.inputs)
+                    || !effect.preconditions.is_empty()
                     || effect.expected_postconditions.is_empty()
+                    || effect.expected_postconditions.len()
+                        > self.config.maximum_conditions_per_effect
+                    || !conditions_are_valid(&effect.expected_postconditions)
+                    || effect.required_capabilities.is_empty()
+                    || effect.required_capabilities.len()
+                        > self.config.maximum_requirements_per_effect
+                    || !capability_requirements_are_valid(effect, &self.config)
+                    || !inverse_is_valid(effect, intent, &self.config)
                     || !valid_idempotency_key(&effect.idempotency_key)
                     || !idempotency_keys
                         .insert((effect.adapter.clone(), effect.idempotency_key.clone()))
@@ -1044,8 +1169,9 @@ impl Kernel {
 
     fn policy_inputs(
         &self,
+        principal_id: PrincipalId,
     ) -> Result<(Vec<Capability>, HashMap<CapabilityId, CapabilityStatus>), KernelError> {
-        let persisted = self.journal.capabilities()?;
+        let persisted = self.journal.capabilities_for_principal(principal_id)?;
         let capabilities = persisted
             .iter()
             .map(|(capability, _)| capability.clone())
@@ -1065,12 +1191,10 @@ impl Kernel {
     ) -> Result<bool, KernelError> {
         let requests: Vec<ApprovalRequest> = self
             .journal
-            .objects("approval_request")?
-            .into_iter()
-            .filter(|request: &ApprovalRequest| request.transaction_id == transaction.id)
-            .collect();
-        let grants: Vec<ApprovalGrant> = self.journal.objects("approval_grant")?;
-        let consumed = self.journal.consumed_approval_nonces()?;
+            .objects_for_transaction("approval_request", transaction.id)?;
+        let grants: Vec<ApprovalGrant> = self
+            .journal
+            .objects_for_transaction("approval_grant", transaction.id)?;
         for request in requests {
             let Some(grant) = grants.iter().find(|grant| grant.request_id == request.id) else {
                 return Ok(false);
@@ -1078,7 +1202,14 @@ impl Kernel {
             let effect = effect_by_id(plan, request.effect_id)?;
             if self
                 .policy
-                .verify_approval(&request, grant, effect, transaction.id, &consumed, now)
+                .verify_approval(
+                    &request,
+                    grant,
+                    effect,
+                    transaction.id,
+                    &self.consumed_nonce_set(&grant.nonce)?,
+                    now,
+                )
                 .is_err()
             {
                 return Ok(false);
@@ -1093,67 +1224,74 @@ impl Kernel {
         plan: &Plan,
     ) -> Result<Vec<EffectAuthority>, KernelError> {
         let now = Utc::now();
-        let (capabilities, statuses) = self.policy_inputs()?;
+        let principal_id = effects(plan)
+            .first()
+            .ok_or_else(|| KernelError::InvalidPlan("plan contains no effects".into()))?
+            .principal_id;
+        let (capabilities, mut statuses) = self.policy_inputs(principal_id)?;
         let requests: Vec<ApprovalRequest> = self
             .journal
-            .objects("approval_request")?
-            .into_iter()
-            .filter(|request: &ApprovalRequest| request.transaction_id == transaction.id)
-            .collect();
-        let grants: Vec<ApprovalGrant> = self.journal.objects("approval_grant")?;
-        let consumed = self.journal.consumed_approval_nonces()?;
-        effects(plan)
-            .into_iter()
-            .map(|effect| {
-                let decision = self.policy.evaluate(
+            .objects_for_transaction("approval_request", transaction.id)?;
+        let grants: Vec<ApprovalGrant> = self
+            .journal
+            .objects_for_transaction("approval_grant", transaction.id)?;
+        let mut authority = Vec::new();
+        for effect in effects(plan) {
+            let decision = self.policy.evaluate(
+                effect,
+                transaction.id,
+                transaction.intent_id,
+                &capabilities,
+                &statuses,
+                now,
+            );
+            if decision.outcome == PolicyOutcome::Deny {
+                return Err(KernelError::Authority(format!(
+                    "effect {} no longer has sufficient live capability",
+                    effect.id
+                )));
+            }
+            let approval = if decision.outcome == PolicyOutcome::RequireApproval {
+                let request = requests
+                    .iter()
+                    .find(|request| request.effect_id == effect.id)
+                    .ok_or(KernelError::ApprovalMissing(effect.id))?;
+                let grant = grants
+                    .iter()
+                    .find(|grant| grant.request_id == request.id)
+                    .ok_or(KernelError::ApprovalMissing(effect.id))?;
+                self.policy.verify_approval(
+                    request,
+                    grant,
                     effect,
                     transaction.id,
-                    transaction.intent_id,
-                    &capabilities,
-                    &statuses,
+                    &self.consumed_nonce_set(&grant.nonce)?,
                     now,
-                );
-                if decision.outcome == PolicyOutcome::Deny {
-                    return Err(KernelError::Authority(format!(
-                        "effect {} no longer has sufficient live capability",
-                        effect.id
-                    )));
-                }
-                let approval = if decision.outcome == PolicyOutcome::RequireApproval {
-                    let request = requests
-                        .iter()
-                        .find(|request| request.effect_id == effect.id)
-                        .ok_or(KernelError::ApprovalMissing(effect.id))?;
-                    let grant = grants
-                        .iter()
-                        .find(|grant| grant.request_id == request.id)
-                        .ok_or(KernelError::ApprovalMissing(effect.id))?;
-                    self.policy.verify_approval(
-                        request,
-                        grant,
-                        effect,
-                        transaction.id,
-                        &consumed,
-                        now,
-                    )?;
-                    Some(grant.clone())
-                } else {
-                    None
-                };
-                Ok(EffectAuthority {
-                    capability_ids: decision.capability_ids,
-                    approval,
-                })
-            })
-            .collect()
+                )?;
+                Some(grant.clone())
+            } else {
+                None
+            };
+            reserve_capability_uses(&mut statuses, &decision.capability_ids)?;
+            authority.push(EffectAuthority {
+                capability_ids: decision.capability_ids,
+                approval,
+            });
+        }
+        Ok(authority)
+    }
+
+    fn consumed_nonce_set(&self, nonce: &str) -> Result<HashSet<String>, KernelError> {
+        if self.journal.approval_nonce_consumed(nonce)? {
+            Ok(HashSet::from([nonce.to_owned()]))
+        } else {
+            Ok(HashSet::new())
+        }
     }
 
     fn consume_authority(&self, authority: &EffectAuthority) -> Result<(), KernelError> {
         self.journal
-            .consume_capabilities(&authority.capability_ids)?;
-        if let Some(grant) = &authority.approval {
-            self.journal.consume_approval(grant)?;
-        }
+            .consume_authority(&authority.capability_ids, authority.approval.as_ref())?;
         Ok(())
     }
 
@@ -1434,13 +1572,57 @@ pub enum KernelError {
     Transition(#[from] TransitionError),
 }
 
-fn validate_intent(intent: &Intent, limit: usize) -> Result<(), KernelError> {
+fn capability_requirements_are_valid(effect: &Effect, config: &KernelConfig) -> bool {
+    let unique = effect
+        .required_capabilities
+        .iter()
+        .enumerate()
+        .all(|(index, requirement)| !effect.required_capabilities[..index].contains(requirement));
+    unique
+        && effect.required_capabilities.iter().all(|requirement| {
+            requirement.adapter == effect.adapter
+                && requirement.operation == effect.operation
+                && requirement.resource == effect.resource
+                && requirement.constraints.len() <= config.maximum_capability_constraints
+                && requirement
+                    .constraints
+                    .iter()
+                    .all(|(name, value)| valid_capability_constraint(name, value))
+        })
+}
+
+fn inverse_is_valid(effect: &Effect, intent: &Intent, config: &KernelConfig) -> bool {
+    effect.inverse.as_ref().is_none_or(|inverse| {
+        valid_code(&inverse.adapter, 128)
+            && valid_code(&inverse.operation, 128)
+            && inverse.inputs.len() <= config.maximum_inputs_per_effect
+            && inverse.inputs.keys().all(|key| valid_public_key(key, 256))
+            && effect_inputs_are_safe(&inverse.inputs)
+            && valid_resource_scope(&inverse.resource)
+            && intent
+                .requested_resources
+                .iter()
+                .any(|scope| resource_covers(scope, &inverse.resource))
+    })
+}
+
+fn validate_intent(intent: &Intent, config: &KernelConfig) -> Result<(), KernelError> {
+    let resources_are_unique = intent
+        .requested_resources
+        .iter()
+        .enumerate()
+        .all(|(index, resource)| !intent.requested_resources[..index].contains(resource));
     if intent.schema_version != PROTOCOL_VERSION
-        || intent.summary.trim().is_empty()
-        || intent.summary.len() > 4_096
+        || !valid_human_text(&intent.summary, 4_096)
         || intent.requested_resources.is_empty()
+        || intent.requested_resources.len() > config.maximum_intent_resources
+        || !resources_are_unique
+        || !intent.requested_resources.iter().all(valid_resource_scope)
+        || intent.context.len() > config.maximum_intent_context_entries
+        || !intent.context.keys().all(|key| valid_public_key(key, 256))
         || !json_values_have_safe_shape(intent.context.values())
         || context_contains_sensitive_key(&intent.context)
+        || intent.created_at > Utc::now() + Duration::minutes(5)
     {
         return Err(KernelError::InvalidInput(
             "intent version, summary, resource envelope, or secret-safe context is invalid".into(),
@@ -1448,19 +1630,197 @@ fn validate_intent(intent: &Intent, limit: usize) -> Result<(), KernelError> {
     }
     let bytes = serde_json::to_vec(intent)
         .map_err(|_| KernelError::InvalidInput("intent could not be serialized safely".into()))?;
-    if bytes.len() > limit {
+    if bytes.len() > config.maximum_intent_bytes {
         return Err(KernelError::InvalidInput(format!(
-            "intent exceeds the configured {limit}-byte limit"
+            "intent exceeds the configured {}-byte limit",
+            config.maximum_intent_bytes
         )));
     }
     Ok(())
+}
+
+fn validate_capability(
+    capability: &Capability,
+    config: &KernelConfig,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), KernelError> {
+    let operations_are_unique =
+        capability.operations.iter().collect::<HashSet<_>>().len() == capability.operations.len();
+    let resources_are_unique = capability
+        .resources
+        .iter()
+        .enumerate()
+        .all(|(index, resource)| !capability.resources[..index].contains(resource));
+    let valid_time = capability.not_before < capability.expires_at
+        && capability.expires_at > now
+        && capability.expires_at - now <= config.maximum_capability_lifetime
+        && capability.issued_at < capability.expires_at
+        && capability.issued_at <= now + Duration::seconds(5);
+    let valid_shape = valid_code(&capability.adapter, 128)
+        && capability.operations.len() <= config.maximum_capability_operations
+        && !capability.operations.is_empty()
+        && operations_are_unique
+        && capability
+            .operations
+            .iter()
+            .all(|operation| valid_code(operation, 128))
+        && capability.resources.len() <= config.maximum_capability_resources
+        && !capability.resources.is_empty()
+        && resources_are_unique
+        && capability.resources.iter().all(valid_resource_scope)
+        && capability.constraints.len() <= config.maximum_capability_constraints
+        && capability
+            .constraints
+            .iter()
+            .all(|(name, value)| valid_capability_constraint(name, value))
+        && capability.max_uses > 0
+        && capability.max_uses <= config.maximum_capability_uses
+        && valid_nonce(&capability.nonce);
+    let bytes = serde_json::to_vec(capability).map_err(|_| {
+        KernelError::InvalidInput("capability could not be serialized safely".into())
+    })?;
+    if !valid_time || !valid_shape || bytes.len() > config.maximum_capability_bytes {
+        return Err(KernelError::InvalidInput(
+            "capability authority, bounds, identifiers, resources, constraints, or time window are invalid"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn valid_code(value: &str, maximum_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= maximum_bytes
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':' | b'/')
+        })
+}
+
+fn valid_human_text(value: &str, maximum_bytes: usize) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= maximum_bytes
+        && !value
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+}
+
+fn valid_public_key(value: &str, maximum_bytes: usize) -> bool {
+    !value.is_empty() && value.len() <= maximum_bytes && !value.chars().any(char::is_control)
+}
+
+fn valid_nonce(value: &str) -> bool {
+    valid_code(value, 256)
+}
+
+fn valid_capability_constraint(name: &str, value: &str) -> bool {
+    if !valid_code(name, 128) || value.is_empty() || value.len() > 1_024 {
+        return false;
+    }
+    match name {
+        "max_timeout_ms" => value.parse::<u64>().is_ok_and(|value| value > 0),
+        "max_risk" => matches!(value, "low" | "medium" | "high" | "critical"),
+        "allow_irreversible" => matches!(value, "true" | "false"),
+        _ => !value.chars().any(char::is_control),
+    }
+}
+
+fn effect_inputs_are_safe(inputs: &EffectInputs) -> bool {
+    inputs.iter().all(|(name, input)| match input {
+        InputValue::Public { value } => {
+            !is_sensitive_key(name) && !json_contains_sensitive_key(value)
+        }
+        InputValue::SecretRef {
+            provider,
+            key,
+            redacted,
+        } => valid_code(provider, 128) && valid_public_key(key, 1_024) && redacted == "[REDACTED]",
+    })
+}
+
+fn conditions_are_valid(conditions: &[Condition]) -> bool {
+    conditions.iter().enumerate().all(|(index, condition)| {
+        !conditions[..index].contains(condition)
+            && match condition {
+                Condition::FileExists { path, .. } => valid_bounded_text(path, 4_096),
+                Condition::FileSha256 { path, digest } => {
+                    valid_bounded_text(path, 4_096) && valid_sha256(digest)
+                }
+                Condition::HttpStatus { status } => (100..=599).contains(status),
+                Condition::OutputSha256 { digest } => valid_sha256(digest),
+                Condition::Custom { name, parameters } => {
+                    valid_code(name, 256)
+                        && json_values_have_safe_shape(std::iter::once(parameters))
+                        && !json_contains_sensitive_key(parameters)
+                }
+            }
+    })
+}
+
+fn valid_bounded_text(value: &str, maximum_bytes: usize) -> bool {
+    !value.is_empty() && value.len() <= maximum_bytes && !value.chars().any(char::is_control)
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn valid_resource_scope(resource: &ResourceScope) -> bool {
+    match resource {
+        ResourceScope::Filesystem { workspace, path } => {
+            valid_code(workspace, 128) && path.len() <= 4_096 && resource_covers(resource, resource)
+        }
+        ResourceScope::FilesystemSet { workspace, paths } => {
+            valid_code(workspace, 128)
+                && !paths.is_empty()
+                && paths.len() <= 128
+                && paths
+                    .iter()
+                    .enumerate()
+                    .all(|(index, path)| path.len() <= 4_096 && !paths[..index].contains(path))
+                && resource_covers(resource, resource)
+        }
+        ResourceScope::Http {
+            scheme,
+            domain,
+            path_prefix,
+            ..
+        } => {
+            matches!(scheme.as_str(), "http" | "https")
+                && !domain.is_empty()
+                && domain.len() <= 253
+                && domain.is_ascii()
+                && domain == &domain.to_ascii_lowercase()
+                && domain.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric()
+                        || matches!(byte, b'.' | b'-' | b':' | b'[' | b']' | b'%')
+                })
+                && path_prefix.len() <= 4_096
+                && !path_prefix.chars().any(char::is_control)
+                && resource_covers(resource, resource)
+        }
+        ResourceScope::Process {
+            executable,
+            workdir,
+        } => valid_bounded_text(executable, 4_096) && valid_bounded_text(workdir, 4_096),
+        ResourceScope::Generic {
+            namespace,
+            resource,
+        } => valid_code(namespace, 256) && valid_bounded_text(resource, 4_096),
+    }
 }
 
 fn context_contains_sensitive_key(context: &std::collections::BTreeMap<String, Value>) -> bool {
     if context.keys().any(|key| is_sensitive_key(key)) {
         return true;
     }
-    let mut stack = context.values().collect::<Vec<_>>();
+    context.values().any(json_contains_sensitive_key)
+}
+
+fn json_contains_sensitive_key(root: &Value) -> bool {
+    let mut stack = vec![root];
     while let Some(value) = stack.pop() {
         match value {
             Value::Object(map) => {
@@ -1592,6 +1952,22 @@ fn policy_status(facts: CapabilityFacts) -> CapabilityStatus {
         uses: facts.uses,
         revoked: facts.revoked,
     }
+}
+
+fn reserve_capability_uses(
+    statuses: &mut HashMap<CapabilityId, CapabilityStatus>,
+    capability_ids: &[CapabilityId],
+) -> Result<(), KernelError> {
+    for capability_id in capability_ids {
+        let status = statuses.get_mut(capability_id).ok_or_else(|| {
+            KernelError::Invariant("policy selected a capability without persisted status".into())
+        })?;
+        status.uses = status
+            .uses
+            .checked_add(1)
+            .ok_or_else(|| KernelError::Invariant("capability use count overflow".into()))?;
+    }
+    Ok(())
 }
 
 fn validate_adapter_result(result: &AdapterResult, limit: usize) -> Result<(), KernelError> {
@@ -1895,6 +2271,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn capability_issuance_shape_is_bounded_before_persistence() {
+        let now = Utc::now();
+        let valid = Capability {
+            id: CapabilityId::new(),
+            principal_id: PrincipalId::new(),
+            intent_id: None,
+            transaction_id: None,
+            adapter: "filesystem".into(),
+            operations: vec!["read".into()],
+            resources: vec![ResourceScope::Filesystem {
+                workspace: "demo".into(),
+                path: "notes".into(),
+            }],
+            constraints: BTreeMap::from([("max_risk".into(), "low".into())]),
+            not_before: now,
+            expires_at: now + Duration::minutes(5),
+            nonce: "bounded-capability-nonce".into(),
+            max_uses: 1,
+            issued_at: now,
+        };
+        let config = KernelConfig::default();
+        validate_capability(&valid, &config, now).unwrap();
+
+        let mut overlong = valid.clone();
+        overlong.expires_at = now + Duration::hours(25);
+        assert!(validate_capability(&overlong, &config, now).is_err());
+
+        let mut duplicate = valid.clone();
+        duplicate.operations.push("read".into());
+        assert!(validate_capability(&duplicate, &config, now).is_err());
+
+        let mut malformed = valid;
+        malformed
+            .constraints
+            .insert("max_risk".into(), "extreme".into());
+        assert!(validate_capability(&malformed, &config, now).is_err());
+    }
+
     #[tokio::test]
     async fn full_filesystem_flow_commits_and_rolls_back() {
         let (temp, kernel, human, agent) = kernel();
@@ -1916,6 +2331,12 @@ mod tests {
             .await
             .unwrap();
         assert!(approved.all_effects_approved);
+        let repeated = kernel
+            .grant_approval(preview.approval_requests[0].id, human.id)
+            .await
+            .unwrap();
+        assert_eq!(repeated.grant, approved.grant);
+        assert_eq!(repeated.transaction.revision, approved.transaction.revision);
         let run = kernel
             .run_transaction(submission.transaction.id)
             .await
@@ -1940,12 +2361,49 @@ mod tests {
     async fn no_effect_executes_without_capability() {
         let (temp, kernel, _human, agent) = kernel();
         let submission = kernel.submit_intent(intent(&agent)).await.unwrap();
+        let target = temp.path().join("workspace/notes/hello.txt");
+        std::fs::write(&target, "must remain unread and unchanged\n").unwrap();
         let preview = kernel
             .preview_transaction(submission.transaction.id)
             .await
             .unwrap();
         assert_eq!(preview.transaction.state, TransactionState::Denied);
-        assert!(!temp.path().join("workspace/notes/hello.txt").exists());
+        assert!(matches!(
+            preview.plan.steps[0].effects[0].preview,
+            veyra_protocol::Preview::Pending
+        ));
+        assert_eq!(
+            std::fs::read_to_string(target).unwrap(),
+            "must remain unread and unchanged\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_use_capability_cannot_be_overbooked_across_a_plan() {
+        let (_temp, kernel, human, agent) = kernel();
+        let submission = kernel.submit_intent(intent(&agent)).await.unwrap();
+        kernel
+            .issue_capability(human.id, &capability(&human, &agent, &submission))
+            .unwrap();
+        let mut plan = submission.plan.clone();
+        let first_id = plan.steps[0].effects[0].id;
+        let mut second = plan.steps[0].effects[0].clone();
+        second.id = EffectId::new();
+        second.causal_parent.effect_id = Some(first_id);
+        second.idempotency_key.push_str("-second");
+        plan.steps[0].effects.push(second);
+
+        let decisions = kernel
+            .preflight_effects(&submission.transaction, &mut plan)
+            .await
+            .unwrap();
+
+        assert_eq!(decisions[0].outcome, PolicyOutcome::RequireApproval);
+        assert_eq!(decisions[1].outcome, PolicyOutcome::Deny);
+        assert!(matches!(
+            plan.steps[0].effects[1].preview,
+            veyra_protocol::Preview::Pending
+        ));
     }
 
     #[tokio::test]
@@ -2039,7 +2497,7 @@ mod tests {
             unsafe_intent
                 .context
                 .insert(key.into(), json!("raw-secret"));
-            assert!(validate_intent(&unsafe_intent, 1024 * 1024).is_err());
+            assert!(validate_intent(&unsafe_intent, &KernelConfig::default()).is_err());
         }
     }
 
@@ -2050,7 +2508,11 @@ mod tests {
         oversized
             .context
             .insert("content".into(), json!("x".repeat(2048)));
-        assert!(validate_intent(&oversized, 1024).is_err());
+        let small_config = KernelConfig {
+            maximum_intent_bytes: 1024,
+            ..KernelConfig::default()
+        };
+        assert!(validate_intent(&oversized, &small_config).is_err());
 
         let mut deeply_nested = intent(&agent);
         let mut value = Value::Null;
@@ -2058,7 +2520,7 @@ mod tests {
             value = Value::Array(vec![value]);
         }
         deeply_nested.context.insert("nested".into(), value);
-        assert!(validate_intent(&deeply_nested, 1024 * 1024).is_err());
+        assert!(validate_intent(&deeply_nested, &KernelConfig::default()).is_err());
     }
 
     #[test]
@@ -2165,6 +2627,91 @@ mod tests {
             kernel.validate_plan(&intent, &plan),
             Err(KernelError::InvalidPlan(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn planner_inputs_and_conditions_fail_closed_before_adapter_access() {
+        let (_temp, kernel, _human, agent) = kernel();
+        let intent = intent(&agent);
+
+        let mut raw_secret = FixturePlanner.plan(&intent).await.unwrap();
+        raw_secret.steps[0].effects[0]
+            .inputs
+            .insert("api_token".into(), veyra_protocol::public("raw-secret"));
+        assert!(matches!(
+            kernel.validate_plan(&intent, &raw_secret),
+            Err(KernelError::InvalidPlan(_))
+        ));
+
+        let mut forged_marker = FixturePlanner.plan(&intent).await.unwrap();
+        forged_marker.steps[0].effects[0].inputs.insert(
+            "header:authorization".into(),
+            InputValue::SecretRef {
+                provider: "environment".into(),
+                key: "SERVICE_TOKEN".into(),
+                redacted: "raw-secret".into(),
+            },
+        );
+        assert!(matches!(
+            kernel.validate_plan(&intent, &forged_marker),
+            Err(KernelError::InvalidPlan(_))
+        ));
+
+        let mut ignored_precondition = FixturePlanner.plan(&intent).await.unwrap();
+        ignored_precondition.steps[0].effects[0].preconditions = vec![Condition::FileExists {
+            path: "notes/hello.txt".into(),
+            expected: false,
+        }];
+        assert!(matches!(
+            kernel.validate_plan(&intent, &ignored_precondition),
+            Err(KernelError::InvalidPlan(_))
+        ));
+
+        let mut out_of_scope_check = FixturePlanner.plan(&intent).await.unwrap();
+        out_of_scope_check.steps[0].effects[0].expected_postconditions =
+            vec![Condition::FileSha256 {
+                path: "notes/private.txt".into(),
+                digest: "aa".repeat(32),
+            }];
+        assert!(matches!(
+            kernel.validate_plan(&intent, &out_of_scope_check),
+            Err(KernelError::Adapter(AdapterError::Containment(_)))
+        ));
+
+        let mut non_canonical_digest = FixturePlanner.plan(&intent).await.unwrap();
+        if let Condition::FileSha256 { digest, .. } =
+            &mut non_canonical_digest.steps[0].effects[0].expected_postconditions[0]
+        {
+            *digest = "AA".repeat(32);
+        }
+        assert!(matches!(
+            kernel.validate_plan(&intent, &non_canonical_digest),
+            Err(KernelError::InvalidPlan(_))
+        ));
+    }
+
+    #[test]
+    fn resource_identifiers_and_digests_require_canonical_safe_text() {
+        assert!(!valid_resource_scope(&ResourceScope::Filesystem {
+            workspace: "demo".into(),
+            path: "notes/line\nbreak".into(),
+        }));
+        assert!(!valid_resource_scope(&ResourceScope::Http {
+            scheme: "https".into(),
+            domain: "example.com\n".into(),
+            port: None,
+            path_prefix: "/api".into(),
+        }));
+        assert!(!valid_resource_scope(&ResourceScope::Process {
+            executable: "tool\u{1b}".into(),
+            workdir: "workspace".into(),
+        }));
+        assert!(!valid_resource_scope(&ResourceScope::Generic {
+            namespace: "example.adapter".into(),
+            resource: "unsafe\rresource".into(),
+        }));
+        assert!(!valid_sha256(&"AA".repeat(32)));
+        assert!(valid_sha256(&"aa".repeat(32)));
     }
 
     #[tokio::test]
@@ -2468,6 +3015,40 @@ mod tests {
                 state == TransactionState::ManualRecovery
             );
         }
+        assert!(kernel.journal().verify_chain().unwrap().valid);
+    }
+
+    #[test]
+    fn restart_recovery_scans_more_than_one_bounded_page() {
+        let (_temporary, kernel, _human, _agent) = kernel();
+        let mut transaction_ids = Vec::new();
+        for _ in 0..501 {
+            let now = Utc::now();
+            let transaction = Transaction {
+                schema_version: PROTOCOL_VERSION.into(),
+                id: TransactionId::new(),
+                intent_id: IntentId::new(),
+                plan_id: veyra_protocol::PlanId::new(),
+                state: TransactionState::Draft,
+                effect_ids: vec![],
+                receipt_ids: vec![],
+                revision: 0,
+                created_at: now,
+                updated_at: now,
+                manual_recovery_reason: None,
+            };
+            transaction_ids.push(transaction.id);
+            kernel.journal().create_transaction(&transaction).unwrap();
+        }
+
+        kernel.recover_after_restart().unwrap();
+
+        assert!(transaction_ids.into_iter().all(|transaction_id| {
+            kernel
+                .journal()
+                .transaction(transaction_id)
+                .is_ok_and(|transaction| transaction.state == TransactionState::Cancelled)
+        }));
         assert!(kernel.journal().verify_chain().unwrap().valid);
     }
 }

@@ -1,5 +1,6 @@
 import type {
   ApprovalOutcome,
+  ApiPage,
   AuditEvent,
   AuditVerification,
   Capability,
@@ -24,6 +25,17 @@ export interface VeyraClientOptions {
   timeoutMs?: number;
   /** Maximum decoded response body. Defaults to 64 MiB. */
   maximumResponseBytes?: number;
+}
+
+export interface PageOptions {
+  /** Requested page size; the server applies an endpoint-specific hard maximum. */
+  limit?: number;
+  /** Opaque cursor returned by the previous page. */
+  cursor?: string;
+}
+
+export interface AuditPageOptions extends PageOptions {
+  transactionId?: string;
 }
 
 interface ApiErrorEnvelope {
@@ -119,6 +131,12 @@ export class VeyraClient {
     return this.#request("transactions");
   }
 
+  listTransactionPage(
+    options: PageOptions = {},
+  ): Promise<ApiPage<Transaction>> {
+    return this.#request(pagePath("transactions/page", options));
+  }
+
   getTransaction(id: string): Promise<Transaction> {
     return this.#request(`transactions/${encodeURIComponent(id)}`);
   }
@@ -176,10 +194,21 @@ export class VeyraClient {
     return this.#request(withTransactionQuery("audit/events", transactionId));
   }
 
+  auditEventPage(options: AuditPageOptions = {}): Promise<ApiPage<AuditEvent>> {
+    return this.#request(auditPagePath("audit/events/page", options));
+  }
+
   auditExport(
     transactionId?: string,
-  ): Promise<{ transaction_id: string | null; text: string }> {
-    return this.#request(withTransactionQuery("audit/export", transactionId));
+    options: PageOptions = {},
+  ): Promise<{
+    transaction_id: string | null;
+    text: string;
+    next_cursor: string | null;
+  }> {
+    const auditOptions: AuditPageOptions =
+      transactionId === undefined ? options : { ...options, transactionId };
+    return this.#request(auditPagePath("audit/export", auditOptions));
   }
 
   verifyAudit(): Promise<AuditVerification> {
@@ -188,6 +217,12 @@ export class VeyraClient {
 
   recoveryActions(): Promise<RecoveryRecord[]> {
     return this.#request("recovery");
+  }
+
+  recoveryActionPage(
+    options: PageOptions = {},
+  ): Promise<ApiPage<RecoveryRecord>> {
+    return this.#request(pagePath("recovery/page", options));
   }
 
   seedDemo(content?: string): Promise<DemoSeed> {
@@ -243,10 +278,10 @@ export class VeyraClient {
           rawCode !== undefined && /^[a-z0-9_]{1,64}$/u.test(rawCode)
             ? rawCode
             : "api_error";
-        const message = (envelope.error?.message ?? "Veyra API request failed")
-          .split(this.#token)
-          .join("[REDACTED]")
-          .slice(0, 1024);
+        const message = safeErrorMessage(
+          envelope.error?.message ?? "Veyra API request failed",
+          this.#token,
+        );
         throw new VeyraApiError(response.status, code, message);
       }
       return value as T;
@@ -307,8 +342,42 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
 
+function safeErrorMessage(message: string, token: string): string {
+  return Array.from(message.split(token).join("[REDACTED]"))
+    .slice(0, 1024)
+    .join("")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ");
+}
+
 function withTransactionQuery(path: string, transactionId?: string): string {
   return transactionId === undefined
     ? path
     : `${path}?transaction_id=${encodeURIComponent(transactionId)}`;
+}
+
+function pagePath(path: string, options: PageOptions): string {
+  const query = new URLSearchParams();
+  if (options.limit !== undefined) {
+    if (!isPositiveInteger(options.limit))
+      throw new TypeError("Veyra page limit must be a positive integer");
+    query.set("limit", String(options.limit));
+  }
+  if (options.cursor !== undefined) {
+    if (
+      options.cursor.length === 0 ||
+      options.cursor.length > 4096 ||
+      /[\u0000-\u001f\u007f]/u.test(options.cursor)
+    )
+      throw new TypeError("Veyra page cursor is malformed");
+    query.set("cursor", options.cursor);
+  }
+  const suffix = query.toString();
+  return suffix === "" ? path : `${path}?${suffix}`;
+}
+
+function auditPagePath(path: string, options: AuditPageOptions): string {
+  const paged = pagePath(path, options);
+  if (options.transactionId === undefined) return paged;
+  const separator = paged.includes("?") ? "&" : "?";
+  return `${paged}${separator}transaction_id=${encodeURIComponent(options.transactionId)}`;
 }
