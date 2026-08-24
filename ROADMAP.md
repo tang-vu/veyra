@@ -3,13 +3,15 @@
 This roadmap communicates direction, not a delivery promise. Security correctness and a coherent
 execution boundary take priority over adapter count.
 
-## 0.1 — local reversible vertical slice
+## 0.1 — initial public release
 
 - Versioned protocol, deny-by-default capabilities, exact approval, explicit state machine
 - SQLite journal, recovery classification, authenticated receipts, redacted audit export
 - Reversible confined filesystem adapter; bounded HTTP and disabled process adapters
 - Fixture and OpenAI Responses-compatible planners
 - Authenticated daemon, CLI, TypeScript SDK, Tauri control plane, eval suite, and OSS baseline
+- Checksummed Linux/Windows artifacts, GitHub build-provenance attestations, and an attested SPDX 2.3
+  repository dependency snapshot
 
 ## Next
 
@@ -30,7 +32,8 @@ execution boundary take priority over adapter count.
   ([tracking issue #4](https://github.com/tang-vu/veyra/issues/4))
 - Reproducible-build hardening and platform code signing. Tag releases prepare checksums and
   GitHub/Sigstore build-provenance attestations, but binaries and installers remain unsigned
-- Generate and attest a multi-ecosystem SPDX or CycloneDX release SBOM
+- Refine the multi-ecosystem repository SBOM into per-artifact dependency inventories tied directly
+  to each produced binary and installer
 
 ## Before 1.0
 

@@ -18,6 +18,9 @@ this repository; when these notes are shorter, `AGENTS.md` still applies.
   supported Node major and preserve its compatibility job unless that public contract is upgraded.
 - Keep required checks unconditional on matching pull requests and preserve draft-first immutable
   releases, protected `main`/`v*` refs, and the host Actions allowlist.
+- Keep release tags, Rust/npm/Tauri versions, dated changelog entries, and curated versioned release
+  notes synchronized. Preserve tag-time contract validation, checksum/provenance instructions,
+  unsigned-artifact disclosure, and honest SBOM scope.
 - Run `corepack pnpm oss:check` and all relevant gates before claiming completion. When authenticated
   read access exists and hosted policy changed, also run `corepack pnpm oss:host-check`.
 - Never include secrets, private data, databases, build output, browser traces, or package archives.

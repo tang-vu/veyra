@@ -10,6 +10,25 @@ permissions:
   contents: read
 
 jobs:
+  release-contract:
+    name: Validate release contract
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Match tag, manifests, changelog, and release notes
+        run: node scripts/check-release.mjs "$GITHUB_REF_NAME" --require-tag
+
   core-binaries:
     name: Core binaries (${{ matrix.name }})
     permissions:
@@ -68,6 +87,33 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/$package.zip").Hash.ToLowerInvariant()
           "$hash  $package.zip" | Set-Content -Encoding ascii "dist/$package.zip.sha256"
           "VEYRA_RELEASE_ARTIFACT=dist/$package.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Smoke-test packaged Linux binaries
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_root="$RUNNER_TEMP/veyra-release-smoke"
+          mkdir -p "$smoke_root"
+          tar -xzf "$VEYRA_RELEASE_ARTIFACT" -C "$smoke_root"
+          package_root="$smoke_root/veyra-${{ matrix.name }}"
+          "$package_root/veyra" --version
+          "$package_root/veyra-server" --help >/dev/null
+          "$package_root/veyra" demo --json
+
+      - name: Smoke-test packaged Windows binaries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "veyra-release-smoke"
+          Expand-Archive -LiteralPath $env:VEYRA_RELEASE_ARTIFACT -DestinationPath $smokeRoot
+          $packageRoot = Join-Path $smokeRoot "veyra-${{ matrix.name }}"
+          & (Join-Path $packageRoot "veyra.exe") --version
+          if ($LASTEXITCODE -ne 0) { throw "packaged CLI version probe failed" }
+          & (Join-Path $packageRoot "veyra-server.exe") --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "packaged daemon help probe failed" }
+          & (Join-Path $packageRoot "veyra.exe") demo --json
+          if ($LASTEXITCODE -ne 0) { throw "packaged reversible demo failed" }
 
       - name: Attest core archive
         if: startsWith(github.ref, 'refs/tags/v')
@@ -145,12 +191,60 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  release-sbom:
+    name: Release dependency SBOM
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Export and validate SPDX dependency snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          default_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          if [[ "$default_sha" != "$GITHUB_SHA" ]]; then
+            echo "dependency-graph SBOM is default-branch scoped; main moved beyond the release commit" >&2
+            exit 1
+          fi
+          mkdir -p dist
+          sbom_name="veyra-$GITHUB_REF_NAME.spdx.json"
+          gh api "repos/$GITHUB_REPOSITORY/dependency-graph/sbom" --jq .sbom | jq --sort-keys . > "dist/$sbom_name"
+          jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 0)' "dist/$sbom_name" >/dev/null
+          (cd dist && sha256sum "$sbom_name" > "$sbom_name.sha256")
+
+      - name: Attest release SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*.spdx.json
+
+      - name: Upload release SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: veyra-release-sbom
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
   publish-release:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
+      - release-contract
       - core-binaries
       - desktop-windows
+      - release-sbom
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -173,7 +267,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cp LICENSE README.md dist/
+          notes_path="docs/releases/$GITHUB_REF_NAME.md"
+          test -s "$notes_path"
+          cp LICENSE README.md CHANGELOG.md dist/
+          cp "$notes_path" dist/RELEASE_NOTES.md
           cd dist
           shopt -s nullglob
           checksums=(*.sha256)
@@ -193,5 +290,6 @@ jobs:
             echo "release $GITHUB_REF_NAME already exists; publish a new patch version instead" >&2
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --generate-notes --title "Veyra $GITHUB_REF_NAME"
+          release_notes="$(cat "docs/releases/$GITHUB_REF_NAME.md")"
+          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --fail-on-no-commits --generate-notes --notes "$release_notes" --title "Veyra $GITHUB_REF_NAME"
           gh release edit "$GITHUB_REF_NAME" --draft=false

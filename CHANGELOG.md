@@ -5,6 +5,8 @@ Changelog conventions.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-24
+
 ### Added
 
 - Complete `veyra.protocol/v1` domain model, generated JSON Schemas, canonical content digests, and
@@ -77,4 +79,5 @@ Changelog conventions.
 - CodeQL Action components are pinned to one verified upstream release commit and grouped as a
   single Dependabot update so partial version changes cannot break analysis initialization.
 
-[Unreleased]: https://github.com/tang-vu/veyra/commits/main
+[Unreleased]: https://github.com/tang-vu/veyra/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/tang-vu/veyra/releases/tag/v0.1.0

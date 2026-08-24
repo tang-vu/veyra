@@ -44,6 +44,7 @@ jobs:
 
       - name: Verify minimum Node compatibility
         run: |
+          pnpm release:check
           pnpm format
           pnpm check
           pnpm lint
@@ -107,6 +108,7 @@ jobs:
       - name: Verify TypeScript and frontend
         run: |
           pnpm oss:check
+          pnpm release:check
           pnpm format
           pnpm check
           pnpm lint

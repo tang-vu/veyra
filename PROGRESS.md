@@ -377,3 +377,58 @@ archive checks, production audit with no known vulnerability, actionlint 1.7.12,
 with 342 assertions. Before the new hosted context existed, `oss:host-check` failed with exactly the
 missing `JavaScript gate (Node 22)` and exact-required-set assertions, proving that host drift cannot
 be silently reported as complete.
+
+## 2026-08-24 - v0.1.0 release candidate
+
+- Closed the accumulated changelog under a dated `0.1.0` section and added curated versioned release
+  notes with artifact inventory, checksum/provenance commands, package-registry status, the local
+  single-daemon trust boundary, unsigned-installer disclosure, and the tracked GTK/`glib` advisory.
+- Added an executable release contract that keeps the annotated tag, Cargo workspace, all four npm
+  workspace versions, Tauri bundle version, changelog links, and `docs/releases/vX.Y.Z.md` aligned.
+  Both normal CI and the tag workflow run it; a tag checkout additionally proves the tag resolves to
+  the exact checked-out commit.
+- Extended tagged releases with an SPDX 2.3 multi-ecosystem repository dependency snapshot exported
+  from GitHub's dependency graph, a sibling SHA-256 file, and a build-provenance attestation. The job
+  fails rather than claiming tag scope if `main` has moved beyond the tag commit. Release notes state
+  that this is a repository/build dependency snapshot, not a per-binary inventory.
+- The publish job now requires curated notes before creating its draft, prepends them to GitHub's
+  generated change list, attaches README, license, changelog, release notes, binaries, installer,
+  checksums, and SBOM, and publishes only after every checksum validates. The build jobs execute the
+  CLI version, daemon help, and deterministic reversible demo directly from each packaged Linux and
+  Windows archive before upload.
+
+Release-candidate verification completed successfully on the installed Windows GNU toolchain:
+
+```text
+$env:VEYRA_RUST_TOOLCHAIN = "stable-x86_64-pc-windows-gnu"; .\scripts\verify.ps1
+corepack pnpm release:check
+corepack pnpm oss:check
+actionlint 1.7.12
+cargo +stable-x86_64-pc-windows-gnu build --release -p veyra-cli -p veyra-server --locked
+$env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-gnu"; corepack pnpm desktop:build
+```
+
+The complete gate passed 109 Rust tests, 15 JavaScript/TypeScript/UI tests, 16 generated schemas,
+seven Rust and two npm package archives, dependency policy, formatting, public Rust documentation,
+and the deterministic commit/verify/rollback demo. The regenerated release-revision eval result is
+63 passed, 1 environment-limited, and 0 failed; EV-008 remains the documented unprivileged-Windows
+symlink fixture and runs in Linux CI. `release:check` passed 18 assertions and the expanded
+`oss:check` passed 369. A locally repacked Windows archive ran `veyra 0.1.0`, daemon help, and the
+complete commit/verify/rollback demo successfully after extraction. The downloaded actionlint 1.7.12
+binary was verified against both its upstream
+SHA-256 list and GitHub artifact attestation before all six workflows passed linting.
+
+Local unsigned artifact evidence is packaging-only because this host lacks the supported MSVC
+linker. The protected pull request and tag workflow remain authoritative for Linux and Windows MSVC
+release artifacts:
+
+```text
+c1dec48f1789165755151bf5341ebf49d9b41aadb7a36bcd2740656012f579c9  target/release/veyra.exe
+ae891ea858daf9e11670b8d2a38baa59bef7f3d9906ab5e200b8d9b163435fe0  target/release/veyra-server.exe
+5e5774fb70b100847f3db2c4e8a81df0423f236ac77fbff7e9de12353bb0782e  target/release/veyra-desktop.exe
+6577a44fc23375eb6583b230ced6a7e304386de5f5379891958e6338945901fd  target/release/bundle/nsis/Veyra_0.1.0_x64-setup.exe
+```
+
+No tag, GitHub Release, registry package, signing identity, independent maintainer review, or Best
+Practices self-attestation was fabricated during release preparation. Those hosted or human actions
+remain separate evidence.

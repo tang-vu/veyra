@@ -25,6 +25,7 @@ cargo deny check advisories bans licenses sources --hide-inclusion-graph
 
 corepack pnpm install --frozen-lockfile
 corepack pnpm oss:check
+corepack pnpm release:check
 corepack pnpm format
 corepack pnpm check
 corepack pnpm lint
