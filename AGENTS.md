@@ -112,6 +112,9 @@ client-boundary changes require a negative/adversarial regression, not only a su
   dependency review gate by hiding a dependency or weakening policy without documented review.
 - Every external GitHub Action must use an immutable 40-character commit SHA and a nearby release
   comment. Workflow permissions are read-only by default and elevated only on the smallest job.
+- Treat `github/codeql-action/init`, `autobuild`, `analyze`, and `upload-sarif` as one release unit:
+  keep the same SHA/version across workflows and preserve their Dependabot group. Never accept a
+  partial family update merely because one component's pull request is green.
 - Security-boundary parsing and containment changes must update the relevant `fuzz/` target. Keep
   `cargo-fuzz`, its nightly toolchain, harness dependencies, input limits, and execution time bounded
   and pinned; never weaken a discovered invariant or commit corpora/crash artifacts to make fuzzing
