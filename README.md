@@ -63,6 +63,26 @@ Prerequisites:
   tests the minimum supported major while `.node-version` pins the default maintainer toolchain
 - platform prerequisites for [Tauri 2](https://v2.tauri.app/start/prerequisites/) only if building the desktop app
 
+### Download a verified release
+
+The [v0.1.0 release](https://github.com/tang-vu/veyra/releases/tag/v0.1.0) provides Linux and Windows
+CLI/daemon archives plus an unsigned Windows desktop installer. Each binary artifact has a SHA-256
+checksum and a GitHub build-provenance attestation; the release also includes an attested SPDX 2.3
+repository dependency snapshot. Verify downloads before execution:
+
+```sh
+gh release download v0.1.0 --repo tang-vu/veyra --dir dist
+cd dist
+for checksum in *.sha256; do sha256sum --check "$checksum"; done
+gh attestation verify ./veyra-linux-x86_64.tar.gz --repo tang-vu/veyra
+```
+
+See the [release notes](docs/releases/v0.1.0.md) for artifact scope, Windows verification, and known
+security limitations. The installer is not platform-signed; checksums and provenance do not replace
+the trust decision described in the threat model.
+
+### Run from source
+
 Run the complete deterministic flow—no API key or paid service is used:
 
 ```sh

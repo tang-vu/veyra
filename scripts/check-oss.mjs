@@ -100,6 +100,7 @@ const requiredFiles = [
   "rust-toolchain.toml",
   "scripts/check-github.mjs",
   "scripts/check-packages.mjs",
+  "scripts/check-release.mjs",
 ];
 
 for (const path of requiredFiles) {
@@ -119,6 +120,7 @@ for (const marker of [
   "`goal.md` must not be recreated",
   "OSS change matrix",
   "pnpm oss:check",
+  "pnpm release:check",
   "`cargo-fuzz`",
   "Never push, publish, deploy",
 ]) {
@@ -177,6 +179,11 @@ check(
   rootManifest.scripts?.["package:check"] ===
     "node ./scripts/check-packages.mjs",
   "package.json must expose the deterministic package:check script",
+);
+check(
+  rootManifest.scripts?.["release:check"] ===
+    "node ./scripts/check-release.mjs",
+  "package.json must expose the deterministic release:check script",
 );
 
 const rootLicense = normalized(readText("LICENSE"));
@@ -557,6 +564,22 @@ for (const marker of [
 }
 
 const releaseWorkflow = readText(".github/workflows/release.yml");
+for (const marker of [
+  'node scripts/check-release.mjs "$GITHUB_REF_NAME" --require-tag',
+  "name: Release dependency SBOM",
+  "dependency-graph/sbom",
+  "veyra-$GITHUB_REF_NAME.spdx.json",
+  "Attest release SBOM",
+  "Smoke-test packaged Linux binaries",
+  "Smoke-test packaged Windows binaries",
+  'release_notes="$(cat "docs/releases/$GITHUB_REF_NAME.md")"',
+  '--notes "$release_notes"',
+]) {
+  check(
+    releaseWorkflow.includes(marker),
+    `release workflow is missing versioned release evidence: ${marker}`,
+  );
+}
 const draftReleaseIndex = releaseWorkflow.indexOf("gh release create");
 const publishReleaseIndex = releaseWorkflow.indexOf(
   'gh release edit "$GITHUB_REF_NAME" --draft=false',

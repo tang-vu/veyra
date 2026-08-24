@@ -19,17 +19,22 @@ package, change repository settings, or create a public release without explicit
    ```sh
    corepack pnpm install --frozen-lockfile
    corepack pnpm oss:check
+   corepack pnpm release:check
    bash ./scripts/verify.sh
    ```
 
    PowerShell maintainers use `./scripts/verify.ps1`. Also build and smoke-test the platform release
    artifacts described in `PROGRESS.md`.
 
-6. Review `npm pack --dry-run --json` for each public JavaScript package and `cargo package --list`
+6. Create `docs/releases/vX.Y.Z.md` with download verification, trust-boundary limitations,
+   platform-signing status, package-registry status, open advisory disposition, and SBOM scope. The
+   tag workflow prepends these curated notes to GitHub's generated change list and refuses a tag
+   without them.
+7. Review `npm pack --dry-run --json` for each public JavaScript package and `cargo package --list`
    for each publishable Rust crate. Every archive must contain its README and Apache-2.0 license and
    must not contain credentials, local databases, test output, or unrelated repository files.
    `corepack pnpm package:check` performs these checks for every current public archive.
-7. Have another maintainer review security-sensitive releases when one is available.
+8. Have another maintainer review security-sensitive releases when one is available.
 
 ## Tag and publish artifacts
 
@@ -41,12 +46,15 @@ git tag -a vX.Y.Z -m "Veyra vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
-The tag workflow builds locked Linux and Windows binaries plus the unsigned Windows desktop
-installer. It verifies checksums, creates GitHub/Sigstore build-provenance attestations, creates a
-draft GitHub Release, attaches every archive and checksum, and only then publishes the immutable
-release. A failed draft must be inspected before an authorized maintainer removes or replaces it;
-the workflow never edits a published release. Package-registry publication remains a separate,
-explicit maintainer action until trusted publishing is configured.
+The tag workflow first rejects any version or release-note mismatch. It builds locked Linux and
+Windows binaries plus the unsigned Windows desktop installer, exports an SPDX 2.3 repository
+dependency snapshot, verifies checksums, and creates GitHub/Sigstore provenance attestations at each
+build boundary. Each packaged CLI/daemon archive must also run its version probe, daemon help path,
+and deterministic reversible demo on its target runner. The workflow then creates a draft GitHub
+Release with curated and generated notes, attaches every archive, checksum, and SBOM, and only then
+publishes the immutable release. A failed draft must be inspected before an authorized maintainer
+removes or replaces it; the workflow never edits a published release. Package-registry publication
+remains a separate, explicit maintainer action until trusted publishing is configured.
 
 The attestation step stays inside each build job, immediately after packaging, as required by
 [GitHub's provenance guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations).

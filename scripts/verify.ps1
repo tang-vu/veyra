@@ -47,6 +47,8 @@ Assert-LastExitCode "Rust dependency policy"
 Assert-LastExitCode "pnpm install"
 & corepack pnpm oss:check
 Assert-LastExitCode "OSS policy"
+& corepack pnpm release:check
+Assert-LastExitCode "Release contract"
 & corepack pnpm format
 Assert-LastExitCode "Formatting"
 & corepack pnpm check

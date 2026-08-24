@@ -41,6 +41,7 @@ a broad implicit guarantee.
   `corepack pnpm check`, `corepack pnpm lint`, `corepack pnpm test`, `corepack pnpm build`.
 - OSS policy: `corepack pnpm oss:check`.
 - Package archives after build: `corepack pnpm package:check`.
+- Release contract: `corepack pnpm release:check` before proposing or pushing a version tag.
 - Demo: `cargo run --locked -p veyra-cli -- demo --json` (add `--directory <path>` only when
   durable inspection is intended).
 - Full local gate: `./scripts/verify.ps1` from PowerShell 5+ or `bash ./scripts/verify.sh`.
@@ -136,6 +137,10 @@ client-boundary changes require a negative/adversarial regression, not only a su
 - GitHub Releases are immutable. Release automation must create a draft, attach and verify every
   asset, and publish only after the draft is complete. Never replace an asset or move a published
   release tag.
+- A release tag, Cargo workspace, npm workspaces, Tauri bundle, dated changelog section, and curated
+  `docs/releases/vX.Y.Z.md` notes must agree on one version. Preserve the tag-time release-contract
+  check and disclose unsigned artifacts, residual security risk, package-registry status, checksum
+  verification, provenance verification, and SBOM scope in those notes.
 - Repository rulesets protect `main` and `v*` tags. Do not rename the required Linux, Windows,
   minimum-Node, dependency-review, CodeQL, or security-boundary fuzz check contexts, or weaken
   pull-request, linear-history, force-push, deletion, tag, or conversation-resolution rules without
