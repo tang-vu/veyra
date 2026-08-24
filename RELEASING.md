@@ -29,7 +29,9 @@ package, change repository settings, or create a public release without explicit
 6. Create `docs/releases/vX.Y.Z.md` with download verification, trust-boundary limitations,
    platform-signing status, package-registry status, open advisory disposition, and SBOM scope. The
    tag workflow prepends these curated notes to GitHub's generated change list and refuses a tag
-   without them.
+   without them. These notes are dual-use GitHub Release metadata: use absolute, tag-pinned HTTPS
+   links for repository documents and verify their rendered targets rather than relying on the
+   source file's relative path context.
 7. Review `npm pack --dry-run --json` for each public JavaScript package and `cargo package --list`
    for each publishable Rust crate. Every archive must contain its README and Apache-2.0 license and
    must not contain credentials, local databases, test output, or unrelated repository files.
