@@ -122,6 +122,18 @@ check(
   ".github/copilot-instructions.md must delegate to the canonical AGENTS.md contract",
 );
 
+const advisoryTrackingUrl = "https://github.com/tang-vu/veyra/issues/4";
+for (const path of [
+  "deny.toml",
+  "docs/security/threat-model.md",
+  "ROADMAP.md",
+]) {
+  check(
+    readText(path).includes(advisoryTrackingUrl),
+    `${path} must retain the tracked disposition for RUSTSEC-2024-0429`,
+  );
+}
+
 const rootManifest = readJson("package.json");
 const workspaceVersion = rootManifest.version;
 check(
