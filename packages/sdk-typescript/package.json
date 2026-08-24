@@ -1,9 +1,34 @@
 {
   "name": "@veyra/sdk",
   "version": "0.1.0",
+  "private": false,
   "description": "Typed client for the authenticated Veyra local API",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/tang-vu/veyra/tree/main/packages/sdk-typescript#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tang-vu/veyra.git",
+    "directory": "packages/sdk-typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/tang-vu/veyra/issues"
+  },
+  "keywords": [
+    "veyra",
+    "ai-agents",
+    "reversible-execution",
+    "typescript",
+    "sdk"
+  ],
   "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -14,7 +39,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

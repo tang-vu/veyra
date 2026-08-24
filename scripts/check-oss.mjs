@@ -1,0 +1,376 @@
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+
+const repository = resolve(import.meta.dirname, "..");
+const failures = [];
+let checks = 0;
+
+function check(condition, message) {
+  checks += 1;
+  if (!condition) {
+    failures.push(message);
+  }
+}
+
+function repositoryPath(path) {
+  return resolve(repository, path);
+}
+
+function readText(path) {
+  return readFileSync(repositoryPath(path), "utf8");
+}
+
+function readJson(path) {
+  return JSON.parse(readText(path));
+}
+
+function normalized(text) {
+  return text.replace(/\r\n/g, "\n").trimEnd();
+}
+
+function repositoryUrl(manifest) {
+  return typeof manifest.repository === "string"
+    ? manifest.repository
+    : manifest.repository?.url;
+}
+
+function checkDiscoveryMetadata(manifest, label) {
+  check(
+    typeof manifest.description === "string" && manifest.description.length > 0,
+    `${label} must have a description`,
+  );
+  check(manifest.license === "Apache-2.0", `${label} must use Apache-2.0`);
+  check(
+    repositoryUrl(manifest) === "git+https://github.com/tang-vu/veyra.git",
+    `${label} must point at the canonical repository`,
+  );
+  check(
+    manifest.homepage?.startsWith("https://github.com/tang-vu/veyra"),
+    `${label} must have a canonical homepage`,
+  );
+  check(
+    manifest.bugs?.url === "https://github.com/tang-vu/veyra/issues",
+    `${label} must route bugs to the public issue tracker`,
+  );
+  check(
+    Array.isArray(manifest.keywords) && manifest.keywords.length >= 3,
+    `${label} must have at least three discovery keywords`,
+  );
+}
+
+const requiredFiles = [
+  ".github/ISSUE_TEMPLATE/bug_report.yml",
+  ".github/ISSUE_TEMPLATE/config.yml",
+  ".github/ISSUE_TEMPLATE/feature_request.yml",
+  ".github/ISSUE_TEMPLATE/question.yml",
+  ".github/copilot-instructions.md",
+  ".github/pull_request_template.md",
+  ".github/workflows/ci.yml",
+  ".github/workflows/codeql.yml",
+  ".github/workflows/release.yml",
+  ".github/workflows/scorecard.yml",
+  ".github/workflows/security.yml",
+  "AGENTS.md",
+  "CHANGELOG.md",
+  "CODE_OF_CONDUCT.md",
+  "CONTRIBUTING.md",
+  "GOVERNANCE.md",
+  "LICENSE",
+  "README.md",
+  "RELEASING.md",
+  "ROADMAP.md",
+  "SECURITY.md",
+  "SUPPORT.md",
+  "Cargo.lock",
+  "deny.toml",
+  "docs/maintainers/repository-settings.md",
+  "package.json",
+  "pnpm-lock.yaml",
+  "rust-toolchain.toml",
+  "scripts/check-packages.mjs",
+];
+
+for (const path of requiredFiles) {
+  check(
+    existsSync(repositoryPath(path)),
+    `required OSS file is missing: ${path}`,
+  );
+}
+
+check(
+  !existsSync(repositoryPath("goal.md")),
+  "goal.md is retired; use ROADMAP.md, CHANGELOG.md, and PROGRESS.md instead",
+);
+
+const agentInstructions = readText("AGENTS.md");
+for (const marker of [
+  "`goal.md` must not be recreated",
+  "OSS change matrix",
+  "pnpm oss:check",
+  "Never push, publish, deploy",
+]) {
+  check(
+    agentInstructions.includes(marker),
+    `AGENTS.md is missing required maintainer rule: ${marker}`,
+  );
+}
+
+check(
+  readText(".github/copilot-instructions.md").includes("AGENTS.md"),
+  ".github/copilot-instructions.md must delegate to the canonical AGENTS.md contract",
+);
+
+const rootManifest = readJson("package.json");
+const workspaceVersion = rootManifest.version;
+check(
+  rootManifest.private === true,
+  "the JavaScript workspace root must stay private",
+);
+check(
+  /^\d+\.\d+\.\d+$/.test(workspaceVersion),
+  "the workspace version must be a stable semantic version",
+);
+checkDiscoveryMetadata(rootManifest, "package.json");
+check(
+  rootManifest.scripts?.["oss:check"] === "node ./scripts/check-oss.mjs",
+  "package.json must expose the deterministic oss:check script",
+);
+check(
+  rootManifest.scripts?.["package:check"] ===
+    "node ./scripts/check-packages.mjs",
+  "package.json must expose the deterministic package:check script",
+);
+
+const rootLicense = normalized(readText("LICENSE"));
+const publicJavaScriptPackages = [
+  "packages/protocol-schema",
+  "packages/sdk-typescript",
+];
+
+for (const packageDirectory of publicJavaScriptPackages) {
+  const manifest = readJson(`${packageDirectory}/package.json`);
+  const label = `${packageDirectory}/package.json`;
+  check(
+    manifest.version === workspaceVersion,
+    `${label} version must match the workspace version`,
+  );
+  check(manifest.private === false, `${label} must explicitly be public`);
+  checkDiscoveryMetadata(manifest, label);
+  check(
+    manifest.repository?.directory === packageDirectory.replaceAll("\\", "/"),
+    `${label} must identify its monorepo directory`,
+  );
+  check(
+    manifest.publishConfig?.access === "public",
+    `${label} must publish with public access`,
+  );
+  check(
+    manifest.publishConfig?.provenance === true,
+    `${label} must request registry provenance`,
+  );
+  check(
+    manifest.engines?.node === ">=22.0.0",
+    `${label} must state the supported Node runtime`,
+  );
+  for (const script of ["build", "check", "lint", "test"]) {
+    check(
+      typeof manifest.scripts?.[script] === "string",
+      `${label} must expose a ${script} script`,
+    );
+  }
+  for (const packagedFile of ["README.md", "LICENSE"]) {
+    check(
+      manifest.files?.includes(packagedFile),
+      `${label} must include ${packagedFile} in its package archive`,
+    );
+    check(
+      existsSync(repositoryPath(`${packageDirectory}/${packagedFile}`)),
+      `${packageDirectory}/${packagedFile} is missing`,
+    );
+  }
+  check(
+    normalized(readText(`${packageDirectory}/LICENSE`)) === rootLicense,
+    `${packageDirectory}/LICENSE must match the root license`,
+  );
+}
+
+const desktopManifest = readJson("apps/desktop/package.json");
+const tauriConfiguration = readJson("apps/desktop/src-tauri/tauri.conf.json");
+check(
+  desktopManifest.version === workspaceVersion,
+  "apps/desktop/package.json version must match the workspace version",
+);
+check(
+  tauriConfiguration.version === workspaceVersion,
+  "the Tauri application version must match the workspace version",
+);
+
+const cargoArguments = [];
+if (process.env.VEYRA_RUST_TOOLCHAIN) {
+  cargoArguments.push(`+${process.env.VEYRA_RUST_TOOLCHAIN}`);
+}
+cargoArguments.push("metadata", "--no-deps", "--format-version", "1");
+const cargoMetadata = spawnSync("cargo", cargoArguments, {
+  cwd: repository,
+  encoding: "utf8",
+});
+check(
+  cargoMetadata.status === 0,
+  `cargo metadata failed: ${(cargoMetadata.stderr || cargoMetadata.error?.message || "unknown error").trim()}`,
+);
+
+if (cargoMetadata.status === 0) {
+  const metadata = JSON.parse(cargoMetadata.stdout);
+  const workspaceMembers = new Set(metadata.workspace_members);
+  const publishablePackages = metadata.packages.filter(
+    (manifest) =>
+      workspaceMembers.has(manifest.id) &&
+      (manifest.publish === null || manifest.publish.length > 0),
+  );
+
+  check(
+    publishablePackages.length === 7,
+    `expected 7 publishable Rust crates, found ${publishablePackages.length}`,
+  );
+
+  for (const manifest of publishablePackages) {
+    const label = `${manifest.name} Cargo package`;
+    const packageReadme =
+      typeof manifest.readme === "string"
+        ? resolve(dirname(manifest.manifest_path), manifest.readme)
+        : undefined;
+    check(
+      typeof manifest.description === "string" &&
+        manifest.description.length > 0,
+      `${label} must have a description`,
+    );
+    check(
+      manifest.version === workspaceVersion,
+      `${label} version must match the workspace version`,
+    );
+    check(manifest.license === "Apache-2.0", `${label} must use Apache-2.0`);
+    check(
+      manifest.repository === "https://github.com/tang-vu/veyra",
+      `${label} must point at the canonical repository`,
+    );
+    check(manifest.authors.length > 0, `${label} must identify its authors`);
+    check(
+      packageReadme !== undefined && existsSync(packageReadme),
+      `${label} must have an existing README`,
+    );
+    check(
+      manifest.keywords.length >= 3,
+      `${label} must have at least three discovery keywords`,
+    );
+    check(
+      manifest.categories.length > 0,
+      `${label} must have at least one crates.io category`,
+    );
+    check(
+      typeof manifest.rust_version === "string",
+      `${label} must state its minimum Rust version`,
+    );
+
+    const crateLicense = resolve(dirname(manifest.manifest_path), "LICENSE");
+    check(existsSync(crateLicense), `${label} must ship a local LICENSE file`);
+    if (existsSync(crateLicense)) {
+      check(
+        normalized(readFileSync(crateLicense, "utf8")) === rootLicense,
+        `${relative(repository, crateLicense)} must match the root license`,
+      );
+    }
+  }
+}
+
+const workflowDirectory = repositoryPath(".github/workflows");
+const workflowFiles = readdirSync(workflowDirectory)
+  .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"))
+  .sort();
+
+for (const file of workflowFiles) {
+  const workflow = readFileSync(resolve(workflowDirectory, file), "utf8");
+  const workflowLines = workflow.split(/\r?\n/);
+  const topPermissionsIndex = workflowLines.findIndex(
+    (line) => line === "permissions:",
+  );
+  check(
+    topPermissionsIndex >= 0,
+    `.github/workflows/${file} must declare top-level permissions`,
+  );
+  if (topPermissionsIndex >= 0) {
+    const topPermissions = [];
+    for (const line of workflowLines.slice(topPermissionsIndex + 1)) {
+      if (line.trim() === "" || !/^\s/.test(line)) {
+        break;
+      }
+      topPermissions.push(line);
+    }
+    check(
+      !topPermissions.some((line) => /:\s*write\s*$/.test(line)),
+      `.github/workflows/${file} must not grant write access at workflow scope`,
+    );
+  }
+  check(
+    !/^\s*pull_request_target:\s*$/m.test(workflow),
+    `.github/workflows/${file} must not use the privileged pull_request_target trigger`,
+  );
+
+  const actionLines = workflowLines.filter((line) => /^\s*uses:\s*/.test(line));
+  let checkoutCount = 0;
+  for (const line of actionLines) {
+    const match = line.match(/^\s*uses:\s*([^\s#]+)(?:\s+#\s*(.+))?$/);
+    check(
+      Boolean(match),
+      `.github/workflows/${file} has an unreadable uses line`,
+    );
+    if (!match) {
+      continue;
+    }
+
+    const action = match[1].replace(/^['"]|['"]$/g, "");
+    const versionComment = match[2] ?? "";
+    if (action.startsWith("./")) {
+      continue;
+    }
+    if (action.startsWith("docker://")) {
+      check(
+        /@sha256:[0-9a-f]{64}$/.test(action),
+        `.github/workflows/${file} must pin ${action} by digest`,
+      );
+      continue;
+    }
+
+    check(
+      /^[^@\s]+@[0-9a-f]{40}$/.test(action),
+      `.github/workflows/${file} must pin ${action} to a full commit SHA`,
+    );
+    check(
+      /\bv\d+\.\d+\.\d+\b/.test(versionComment),
+      `.github/workflows/${file} must annotate ${action} with its release version`,
+    );
+    if (action.startsWith("actions/checkout@")) {
+      checkoutCount += 1;
+    }
+  }
+
+  const hardenedCheckoutCount = (
+    workflow.match(/persist-credentials:\s*false/g) ?? []
+  ).length;
+  check(
+    hardenedCheckoutCount === checkoutCount,
+    `.github/workflows/${file} must disable persisted credentials on every checkout`,
+  );
+}
+
+if (failures.length > 0) {
+  console.error(`OSS gate failed with ${failures.length} problem(s):`);
+  for (const failure of failures) {
+    console.error(`- ${failure}`);
+  }
+  process.exit(1);
+}
+
+console.log(
+  `OSS gate passed: ${checks} assertions across community health, package metadata, licenses, AI guidance, and workflow pinning.`,
+);

@@ -4,6 +4,21 @@
   "private": true,
   "description": "Reversible execution for AI agents.",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/tang-vu/veyra#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tang-vu/veyra.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tang-vu/veyra/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "reversible-execution",
+    "capability-security",
+    "audit-trail",
+    "rust"
+  ],
   "packageManager": "pnpm@11.20.0",
   "engines": {
     "node": ">=22.0.0",
@@ -16,6 +31,8 @@
     "lint": "pnpm -r lint",
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
+    "oss:check": "node ./scripts/check-oss.mjs",
+    "package:check": "node ./scripts/check-packages.mjs",
     "eval": "node ./evals/run.mjs",
     "desktop:dev": "pnpm --filter @veyra/desktop tauri dev",
     "desktop:build": "pnpm --filter @veyra/desktop tauri build"

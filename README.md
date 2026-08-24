@@ -1,5 +1,7 @@
 # Veyra
 
+[![CI](https://github.com/tang-vu/veyra/actions/workflows/ci.yml/badge.svg)](https://github.com/tang-vu/veyra/actions/workflows/ci.yml)
+
 **Reversible execution for AI agents.**
 
 Veyra is a local, embeddable execution kernel placed between an AI agent and side-effecting tools.
@@ -61,7 +63,7 @@ Prerequisites:
 Run the complete deterministic flow—no API key or paid service is used:
 
 ```sh
-git clone https://github.com/veyra-project/veyra.git
+git clone https://github.com/tang-vu/veyra.git
 cd veyra
 cargo run --locked -p veyra-cli -- demo --json
 ```
@@ -170,16 +172,32 @@ corepack pnpm install --frozen-lockfile
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-targets --all-features --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+corepack pnpm oss:check
 corepack pnpm check
 corepack pnpm lint
 corepack pnpm test
 corepack pnpm build
+corepack pnpm package:check
 corepack pnpm eval
 ```
 
 `scripts/verify.sh` and `scripts/verify.ps1` run the reproducible local gate. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for platform details and [`SECURITY.md`](SECURITY.md) for private
 vulnerability reporting guidance.
+
+## Community and project health
+
+- Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and the structured issue forms; the pull request
+  template makes trust, compatibility, dependency, documentation, and verification impact explicit.
+- Route usage help through [`SUPPORT.md`](SUPPORT.md) and suspected vulnerabilities through the
+  private process in [`SECURITY.md`](SECURITY.md).
+- [`GOVERNANCE.md`](GOVERNANCE.md) describes decision ownership, while
+  [`RELEASING.md`](RELEASING.md) defines the maintainer-only release and provenance procedure.
+- `corepack pnpm oss:check` enforces the repository's community files, public package metadata and
+  licenses, future-AI instructions, and immutable GitHub Action pins. Host-side protections that
+  source control cannot set are tracked in
+  [`docs/maintainers/repository-settings.md`](docs/maintainers/repository-settings.md).
 
 ## Status
 

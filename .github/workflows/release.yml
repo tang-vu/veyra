@@ -12,6 +12,11 @@ permissions:
 jobs:
   core-binaries:
     name: Core binaries (${{ matrix.name }})
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -41,18 +46,34 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          mkdir -p dist
-          tar -C target/release -czf dist/veyra-${{ matrix.name }}.tar.gz veyra veyra-server
-          sha256sum dist/veyra-${{ matrix.name }}.tar.gz > dist/veyra-${{ matrix.name }}.tar.gz.sha256
+          set -euo pipefail
+          package="veyra-${{ matrix.name }}"
+          mkdir -p "dist/$package"
+          cp target/release/veyra target/release/veyra-server LICENSE README.md "dist/$package/"
+          tar -C dist -czf "dist/$package.tar.gz" "$package"
+          rm -r "dist/$package"
+          (cd dist && sha256sum "$package.tar.gz" > "$package.tar.gz.sha256")
+          echo "VEYRA_RELEASE_ARTIFACT=dist/$package.tar.gz" >> "$GITHUB_ENV"
 
       - name: Package Windows binaries
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path dist -Force | Out-Null
-          Compress-Archive -LiteralPath target/release/veyra.exe,target/release/veyra-server.exe -DestinationPath dist/veyra-${{ matrix.name }}.zip
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath dist/veyra-${{ matrix.name }}.zip).Hash.ToLowerInvariant()
-          "$hash  veyra-${{ matrix.name }}.zip" | Set-Content -Encoding ascii dist/veyra-${{ matrix.name }}.zip.sha256
+          $package = "veyra-${{ matrix.name }}"
+          $stage = Join-Path dist $package
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item -LiteralPath target/release/veyra.exe,target/release/veyra-server.exe,LICENSE,README.md -Destination $stage
+          Compress-Archive -LiteralPath $stage -DestinationPath "dist/$package.zip"
+          Remove-Item -LiteralPath $stage -Recurse
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/$package.zip").Hash.ToLowerInvariant()
+          "$hash  $package.zip" | Set-Content -Encoding ascii "dist/$package.zip.sha256"
+          "VEYRA_RELEASE_ARTIFACT=dist/$package.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Attest core archive
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ env.VEYRA_RELEASE_ARTIFACT }}
 
       - name: Upload core artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -66,6 +87,11 @@ jobs:
     name: Unsigned Windows desktop bundle
     runs-on: windows-latest
     timeout-minutes: 35
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -105,6 +131,12 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path dist $installer.Name)).Hash.ToLowerInvariant()
           "$hash  $($installer.Name)" | Set-Content -Encoding ascii (Join-Path dist "$($installer.Name).sha256")
 
+      - name: Attest desktop installer
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*.exe
+
       - name: Upload desktop artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -112,3 +144,53 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 14
+
+  publish-release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - core-binaries
+      - desktop-windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: veyra-*
+          path: dist
+          merge-multiple: true
+
+      - name: Add release documentation and verify checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp LICENSE README.md dist/
+          cd dist
+          shopt -s nullglob
+          checksums=(*.sha256)
+          (( ${#checksums[@]} > 0 ))
+          sed -i 's/\r$//' -- "${checksums[@]}"
+          for checksum in "${checksums[@]}"; do
+            sha256sum --check "$checksum"
+          done
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists; publish a new patch version instead" >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "Veyra $GITHUB_REF_NAME"

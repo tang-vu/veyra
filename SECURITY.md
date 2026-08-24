@@ -9,8 +9,10 @@ release. Older snapshots are not supported unless a release note says otherwise.
 
 Do not open a public issue for a suspected vulnerability. Use GitHub's private vulnerability
 reporting feature on the repository's **Security → Advisories → Report a vulnerability** page. If
-that feature is unavailable, contact the maintainers listed in the repository metadata and clearly
-mark the message `SECURITY: Veyra`. Do not include live credentials or third-party data.
+that feature is unavailable, use a private contact method published by the repository owner and
+clearly mark the message `SECURITY: Veyra`. If no private contact exists, open a detail-free public
+issue asking for a private channel; do not disclose the vulnerability there. Do not include live
+credentials or third-party data.
 
 Please include:
 

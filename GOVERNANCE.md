@@ -29,8 +29,9 @@ company affiliation alone.
 A maintainer prepares a changelog, verifies schemas and eval results, runs the full gate, and records
 known limitations. Another maintainer reviews security-sensitive releases when available. Tags follow
 semantic versioning; until 1.0, minor versions may contain documented wire changes. Release workflows
-produce unsigned CI artifacts unless platform signing is separately configured by authorized
-maintainers.
+produce checksummed artifacts and GitHub build-provenance attestations. Binaries and installers
+remain unsigned at the platform level unless authorized maintainers separately configure code
+signing; registry publication remains an explicit maintainer action.
 
 ## Project assets
 

@@ -19,10 +19,11 @@ setting.
 
 ## Enforcement
 
-Report conduct concerns privately to the maintainers through the repository's private contact
-channel. Maintainers will investigate promptly, protect reporter privacy where possible, and may
-correct, warn, temporarily ban, or permanently ban participants based on impact and pattern. Anyone
-with a conflict of interest must recuse themselves from enforcement.
+Report conduct concerns through a private contact method published by the repository owner. If none
+exists, open a detail-free issue asking for a private channel; do not identify affected people or
+describe the incident publicly. Maintainers will investigate promptly, protect reporter privacy
+where possible, and may correct, warn, temporarily ban, or permanently ban participants based on
+impact and pattern. Anyone with a conflict of interest must recuse themselves from enforcement.
 
 This policy applies in project spaces and when representing the project in public. It is adapted from
 the Contributor Covenant, version 2.1.

@@ -7,6 +7,7 @@
 - [Adapter authoring](contributing/adapter-authoring.md)
 - [MCP, A2A, and framework comparison](comparison.md)
 - [Architecture decision records](architecture/adr/)
+- [Maintainer repository settings](maintainers/repository-settings.md)
 
-Project process documents live at the repository root: security policy, contributing guide, code of
-conduct, governance, roadmap, and changelog.
+Project process documents live at the repository root: security policy, support guide, contributing
+guide, release procedure, code of conduct, governance, roadmap, and changelog.

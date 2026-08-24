@@ -27,7 +27,9 @@ execution boundary take priority over adapter count.
 - Broader Windows reparse-point and network-filesystem adversarial testing
 - Native no-replace rename support for filesystems that do not provide regular-file hard links
 - Removal of Tauri's transitive GTK3/`glib 0.18` audit exception when upstream supports a fixed stack
-- Reproducible, signed release provenance once project signing infrastructure exists
+- Reproducible-build hardening and platform code signing. Tag releases prepare checksums and
+  GitHub/Sigstore build-provenance attestations, but binaries and installers remain unsigned
+- Generate and attest a multi-ecosystem SPDX or CycloneDX release SBOM
 
 ## Before 1.0
 

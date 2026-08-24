@@ -1,0 +1,43 @@
+name: Usage question
+description: Ask a focused question after checking the documentation
+title: "[Question]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the README, docs index, examples, and SUPPORT.md. Never post credentials,
+        receipt keys, private journals, or third-party data. Report vulnerabilities privately.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I checked the documentation and existing issues.
+          required: true
+        - label: I removed credentials and private data.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or revision
+      placeholder: v0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Include minimal redacted commands and the relevant documented section.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system and relevant Rust, Node, Veyra, or filesystem details.

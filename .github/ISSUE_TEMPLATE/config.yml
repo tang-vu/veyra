@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security report
+    url: https://github.com/tang-vu/veyra/security/policy
+    about: Follow the private reporting policy without exposing a vulnerability publicly.
+  - name: Support guide
+    url: https://github.com/tang-vu/veyra/blob/main/SUPPORT.md
+    about: Choose the right channel and prepare safe diagnostic information.

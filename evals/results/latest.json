@@ -1,7 +1,7 @@
 {
   "schema_version": "veyra.eval-results/v1",
-  "started_at": "2026-08-23T17:21:10.179Z",
-  "completed_at": "2026-08-23T17:22:35.774Z",
+  "started_at": "2026-08-24T02:17:46.553Z",
+  "completed_at": "2026-08-24T02:19:12.805Z",
   "environment": {
     "platform": "win32",
     "architecture": "x64",
@@ -17,19 +17,19 @@
   "gates": {
     "rust": {
       "exit_code": 0,
-      "duration_ms": 66214
+      "duration_ms": 66660
     },
     "typescript": {
       "exit_code": 0,
-      "duration_ms": 7191
+      "duration_ms": 7478
     },
     "desktop": {
       "exit_code": 0,
-      "duration_ms": 5119
+      "duration_ms": 5116
     },
     "demo": {
       "exit_code": 0,
-      "duration_ms": 7067
+      "duration_ms": 6995
     }
   },
   "results": [

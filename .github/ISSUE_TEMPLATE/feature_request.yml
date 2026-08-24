@@ -1,0 +1,48 @@
+name: Feature request
+description: Propose a focused capability or improvement
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Explain the user problem before the implementation. Changes to authority, protocol,
+        persistence, reversibility, or adapter trust normally require a VEP or ADR.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the roadmap and existing issues for this proposal.
+          required: true
+        - label: This request does not contain credentials or private data.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What concrete user or integrator problem is not solved today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed outcome
+      description: Describe observable behavior and success criteria, not only an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Authority, recovery, and compatibility impact
+      description: Note any new resource access, trust boundary, irreversible behavior, wire change, or migration.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Examples or prior art
+      description: Link specifications or primary documentation when useful.

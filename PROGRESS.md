@@ -220,3 +220,60 @@ replacement between the final digest and spawn remains an OS-call race; protocol
 reserved but rejected; retained staging artifacts need lifecycle policy; and the remaining
 per-transaction/high-volume verification paths still need streaming pagination before very large
 journals.
+
+## 2026-08-24 - OSS maintainer and supply-chain baseline
+
+- Retired and deleted the bootstrap-only `goal.md`. `AGENTS.md` is now the canonical human/AI
+  maintainer contract: it defines architecture and security invariants, an OSS change matrix,
+  dependency and release discipline, companion documentation/tests for every public change, and an
+  explicit prohibition on recreating `goal.md` or performing remote maintainer actions without
+  authority. `.github/copilot-instructions.md` routes compatible AI tooling to the same contract.
+- Added structured bug, feature, and usage-question forms, a security-safe support route, a pull
+  request template, `SUPPORT.md`, `RELEASING.md`, and a maintainer checklist for repository-host
+  settings. `CODEOWNERS`, funding, package owners, and signing identities remain intentionally absent
+  until real maintainers configure them.
+- Added the deterministic `oss:check` gate. It currently makes 269 assertions over community-health
+  files, AI instructions, public Rust/npm discovery metadata, exact license copies, retired-file
+  absence, workflow permissions, immutable 40-character Action SHAs, version comments, and disabled
+  checkout credential persistence.
+- Added the post-build `package:check` gate. It inspects the actual Cargo package inventory for all
+  seven publishable crates and `npm pack --dry-run --json` output for both public npm packages,
+  requiring self-contained README/license/source or distribution content and rejecting local state,
+  generated junk, and undeclared files.
+- Added JavaScript/TypeScript CodeQL analysis, dependency review for changed manifests and lockfiles,
+  and OpenSSF Scorecard SARIF publication. Release packaging now includes README/license material,
+  verifies cross-platform checksums, creates Sigstore-backed provenance inside the job that actually
+  built each binary, and creates the tagged GitHub Release without replacing an existing version.
+  All external Actions are pinned to reviewed release commit SHAs with least-privilege job
+  permissions.
+- Corrected every repository, badge, clone, issue, package, and attestation URL from the nonexistent
+  placeholder organization location to the actual public origin, `tang-vu/veyra`.
+
+Final local verification on the committed-source candidate used the installed GNU Rust toolchain
+because this host still lacks the Windows MSVC linker:
+
+```text
+$env:VEYRA_RUST_TOOLCHAIN = "stable-x86_64-pc-windows-gnu"; .\scripts\verify.ps1
+corepack pnpm package:check
+actionlint 1.7.12 .github/workflows/*.yml
+```
+
+The full workspace gate passed 109 Rust tests and 15 JavaScript/TypeScript/UI tests, generated and
+checked all 16 protocol schemas, built public Rust documentation with warnings denied, passed Cargo
+advisory/license/source policy, found no production npm vulnerability at high severity, built the
+frontend, and passed the OSS and package-archive gates. The eval result is 63 passed, 1
+environment-limited, and 0 failed; EV-008 remains the documented unprivileged-Windows symlink
+fixture and runs on Linux CI. The deterministic demo committed one effect, authenticated one
+receipt, passed one verification, checked 39 audit events, rolled back, and removed the workspace
+file. The five workflow files also passed actionlint 1.7.12 after the downloaded checker itself was
+verified with GitHub artifact attestation.
+
+A read-only audit of the current GitHub host found the repository public with Apache-2.0 recognized,
+Issues enabled, secret scanning and push protection enabled, and the default workflow token set to
+read-only. Host configuration is not yet complete: the description and topics are empty, private
+vulnerability reporting and Dependabot security updates are disabled, no branch/tag ruleset exists,
+no project-owned private contact is documented, and Actions currently allows all actions without a
+host-enforced SHA-pin rule. The new issue forms, CodeQL, Scorecard, dependency-review, and provenance
+workflows also cannot be observed remotely until this local commit is pushed. Platform code signing
+and an attested multi-ecosystem SBOM remain roadmap work; no remote setting, tag, release, or registry
+package was changed in this task.

@@ -23,6 +23,12 @@ Changelog conventions.
 - Deterministic end-to-end demo, custom adapter example, adversarial test suite, and 64-scenario eval
   harness.
 - Architecture, protocol, security, contributor, governance, and release documentation.
+- Structured bug, feature, and support intake; an explicit support policy; a maintainer release
+  runbook; and a repository-host hardening checklist.
+- A canonical human/AI maintainer contract with an OSS change matrix, plus a deterministic OSS gate
+  for community files, package discovery metadata, archive licenses, and workflow pinning.
+- Self-contained public Rust and JavaScript package metadata and archives, including READMEs,
+  Apache-2.0 license text, registry discovery fields, and npm provenance configuration.
 
 ### Security
 
@@ -55,5 +61,10 @@ Changelog conventions.
   authenticated receipt to repeat the exact reserved effect digest.
 - The desktop prevents stale bundle responses from overwriting a newer selection and renders failed
   journal verification as a persistent integrity alert instead of a loading state.
+- Dependency review rejects newly introduced high-severity advisories, CodeQL scans JavaScript and
+  TypeScript with extended security queries, OpenSSF Scorecard publishes supply-chain findings, and
+  every third-party Action is immutable-SHA pinned. Tagged release jobs verify checksums, attest
+  binary provenance at the actual build boundary, and create or update a GitHub Release with
+  explicit least-privilege permissions.
 
-[Unreleased]: https://github.com/veyra-project/veyra/commits/main
+[Unreleased]: https://github.com/tang-vu/veyra/commits/main

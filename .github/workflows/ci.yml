@@ -59,6 +59,11 @@ jobs:
       - name: Test Rust
         run: cargo test --workspace --all-targets --all-features --locked
 
+      - name: Build public Rust documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps --locked
+
       - name: Verify generated schemas
         run: |
           cargo run --locked -p veyra-protocol --example generate-schema -- packages/protocol-schema/schema
@@ -67,11 +72,13 @@ jobs:
 
       - name: Verify TypeScript and frontend
         run: |
+          pnpm oss:check
           pnpm format
           pnpm check
           pnpm lint
           pnpm test
           pnpm build
+          pnpm package:check
 
       - name: Run security and recovery evals
         env:

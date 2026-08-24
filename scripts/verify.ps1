@@ -24,6 +24,10 @@ Assert-LastExitCode "Rust lint"
 & cargo @toolchain test --workspace --all-targets --all-features --locked
 Assert-LastExitCode "Rust tests"
 
+$env:RUSTDOCFLAGS = "-D warnings"
+& cargo @toolchain doc --workspace --all-features --no-deps --locked
+Assert-LastExitCode "Rust documentation"
+
 & cargo @toolchain run --locked -p veyra-protocol --example generate-schema -- packages/protocol-schema/schema
 Assert-LastExitCode "Schema generation"
 & node packages/protocol-schema/scripts/verify-generated.mjs
@@ -41,6 +45,8 @@ Assert-LastExitCode "Rust dependency policy"
 
 & corepack pnpm install --frozen-lockfile
 Assert-LastExitCode "pnpm install"
+& corepack pnpm oss:check
+Assert-LastExitCode "OSS policy"
 & corepack pnpm format
 Assert-LastExitCode "Formatting"
 & corepack pnpm check
@@ -51,6 +57,8 @@ Assert-LastExitCode "TypeScript lint"
 Assert-LastExitCode "TypeScript tests"
 & corepack pnpm build
 Assert-LastExitCode "TypeScript build"
+& corepack pnpm package:check
+Assert-LastExitCode "Package archives"
 & corepack pnpm audit --prod --audit-level high
 Assert-LastExitCode "JavaScript dependency audit"
 & corepack pnpm eval

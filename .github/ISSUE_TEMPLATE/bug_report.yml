@@ -1,0 +1,84 @@
+name: Bug report
+description: Report a reproducible defect in Veyra
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Veyra. Do not include API tokens, receipt keys, credentials,
+        private journal databases, or third-party data. Security vulnerabilities belong in a
+        [security policy](https://github.com/tang-vu/veyra/security/policy), not here.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and did not find the same defect.
+          required: true
+        - label: I removed credentials and private data from this report.
+          required: true
+        - label: I can reproduce this on the latest release or current `main`.
+          required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Kernel or state machine
+        - Policy or approval
+        - Journal or recovery
+        - Filesystem adapter
+        - HTTP adapter
+        - Process adapter
+        - Server API
+        - CLI
+        - TypeScript SDK or schemas
+        - Desktop application
+        - Build, CI, packaging, or documentation
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or revision
+      description: Release tag, commit SHA, or output from `veyra --version`.
+      placeholder: v0.1.0 or 8684c0e
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, architecture, Rust/Node versions, and filesystem when relevant.
+      placeholder: Windows 11 x64; Rust 1.96; Node 24; NTFS
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide the smallest deterministic sequence that demonstrates the defect.
+      placeholder: |
+        1. Start Veyra with ...
+        2. Submit ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Add concise logs, screenshots, or JSON output after removing sensitive values.
+      render: text

@@ -17,8 +17,11 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
-repository = "https://github.com/veyra-project/veyra"
+repository = "https://github.com/tang-vu/veyra"
 authors = ["Veyra contributors"]
+readme = "README.md"
+keywords = ["ai-agents", "capabilities", "audit", "security", "recovery"]
+categories = ["development-tools"]
 
 [workspace.dependencies]
 async-trait = "0.1.92"
