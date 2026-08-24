@@ -85,6 +85,7 @@ const requiredFiles = [
   "SUPPORT.md",
   ".node-version",
   ".node-version-min",
+  ".syft.yaml",
   "Cargo.lock",
   "deny.toml",
   "docs/maintainers/repository-settings.md",
@@ -101,6 +102,7 @@ const requiredFiles = [
   "scripts/check-github.mjs",
   "scripts/check-packages.mjs",
   "scripts/check-release.mjs",
+  "scripts/create-release-manifest.mjs",
 ];
 
 for (const path of requiredFiles) {
@@ -565,14 +567,27 @@ for (const marker of [
 
 const releaseWorkflow = readText(".github/workflows/release.yml");
 for (const marker of [
-  'node scripts/check-release.mjs "$GITHUB_REF_NAME" --require-tag',
+  "release_tag:",
+  "release recovery must be dispatched from protected main",
+  'node scripts/check-release.mjs "$VEYRA_RELEASE_TAG" --require-tag',
+  "ref: ${{ env.VEYRA_RELEASE_REF }}",
   "name: Release dependency SBOM",
-  "dependency-graph/sbom",
-  "veyra-$GITHUB_REF_NAME.spdx.json",
+  "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0",
+  "syft-version: v1.42.3",
+  "config: ${{ inputs.release_tag != '' && '.release-control/.syft.yaml' || '.syft.yaml' }}",
+  "veyra-$VEYRA_RELEASE_TAG.spdx.json",
+  'startswith("pkg:cargo/")',
+  'startswith("pkg:npm/")',
   "Attest release SBOM",
   "Smoke-test packaged Linux binaries",
   "Smoke-test packaged Windows binaries",
-  'release_notes="$(cat "docs/releases/$GITHUB_REF_NAME.md")"',
+  "path: .release-control",
+  'node .release-control/scripts/check-release.mjs "$VEYRA_RELEASE_TAG" --require-tag --allow-recovery',
+  "name: Create release manifest",
+  'VEYRA_RELEASE_SOURCE="$GITHUB_WORKSPACE"',
+  'node "$manifest_script" "$VEYRA_RELEASE_TAG" dist',
+  "name: Attest release manifest",
+  'release_notes="$(cat dist/RELEASE_NOTES.md)"',
   '--notes "$release_notes"',
 ]) {
   check(
@@ -580,9 +595,34 @@ for (const marker of [
     `release workflow is missing versioned release evidence: ${marker}`,
   );
 }
+check(
+  !releaseWorkflow.includes("dependency-graph/sbom"),
+  "release SBOM must not depend on the default-branch-only dependency graph export",
+);
+const syftConfig = readText(".syft.yaml");
+for (const excludedPath of [
+  "./.git/**",
+  "./.release-control/**",
+  "./target/**",
+  "./node_modules/**",
+  "./**/node_modules/**",
+  "./**/dist/**",
+]) {
+  check(
+    syftConfig.includes(`- ${excludedPath}`),
+    `.syft.yaml must exclude non-source release input: ${excludedPath}`,
+  );
+}
+const currentReleaseNotes = readText(`docs/releases/v${workspaceVersion}.md`);
+for (const marker of ["Syft 1.42.3", "release-manifest.json"]) {
+  check(
+    currentReleaseNotes.includes(marker),
+    `current release notes must describe generated evidence: ${marker}`,
+  );
+}
 const draftReleaseIndex = releaseWorkflow.indexOf("gh release create");
 const publishReleaseIndex = releaseWorkflow.indexOf(
-  'gh release edit "$GITHUB_REF_NAME" --draft=false',
+  'gh release edit "$VEYRA_RELEASE_TAG" --draft=false',
 );
 check(
   draftReleaseIndex >= 0 &&

@@ -432,3 +432,30 @@ ae891ea858daf9e11670b8d2a38baa59bef7f3d9906ab5e200b8d9b163435fe0  target/release
 No tag, GitHub Release, registry package, signing identity, independent maintainer review, or Best
 Practices self-attestation was fabricated during release preparation. Those hosted or human actions
 remain separate evidence.
+
+## 2026-08-24 - v0.1.0 publication recovery
+
+The annotated `v0.1.0` tag was created at the reviewed merge commit
+`8226d69af7471755357d71c6169509bde240c478`. Its contract, Linux and Windows archives, packaged
+smoke tests, Windows NSIS installer, checksums, artifact attestations, and uploads passed in the tag
+workflow. GitHub's Dependency Graph SBOM endpoint returned HTTP 500 in both the original job and its
+bounded failed-job retry, so the dependent publish job stayed skipped and no draft or public Release
+was created.
+
+Recovery now removes that default-branch API dependency. A full-SHA-pinned Anchore SBOM Action
+(`v0.24.0`, Apache-2.0, verified upstream commit
+`e22c389904149dbc22b58101806040fa8d37a610`) runs pinned Syft 1.42.3 against the exact checkout and
+rejects an SPDX snapshot unless it contains both Cargo and npm package URLs. An explicit
+`release_tag` dispatch is accepted only from protected `main`; the release contract proves the
+existing tag is annotated and resolves to the checkout before all platform artifacts are rebuilt,
+smoke-tested, checksummed, and attested. The tag is never moved or recreated, and publication still
+fails closed if any draft or public release already exists.
+
+A local two-worktree recovery simulation used the immutable tag as product source and the reviewed
+recovery commit as release control. Its 24-assertion recovery contract passed, its manifest recorded
+both distinct commits, and Syft produced SPDX 2.3 with 829 packages (636 Cargo and 170 npm) while
+including zero files from the release-control checkout. The complete project gate subsequently
+passed 109 Rust tests, 15 JavaScript/TypeScript/UI tests, 16 generated schemas, seven Rust plus two
+npm package archives, 63 passing evals, one documented environment-limited eval, and zero failed
+evals. `release:check` passed 21 assertions, `oss:check` passed 411, and actionlint 1.7.12 accepted all
+six workflows.

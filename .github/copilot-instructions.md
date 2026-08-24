@@ -18,6 +18,9 @@ this repository; when these notes are shorter, `AGENTS.md` still applies.
   supported Node major and preserve its compatibility job unless that public contract is upgraded.
 - Keep required checks unconditional on matching pull requests and preserve draft-first immutable
   releases, protected `main`/`v*` refs, and the host Actions allowlist.
+- Recover an unpublished tagged release only from protected `main`, using an existing annotated tag
+  as the exact source checkout for every rebuilt and re-attested artifact. Never move or recreate a
+  tag to absorb workflow fixes.
 - Keep release tags, Rust/npm/Tauri versions, dated changelog entries, and curated versioned release
   notes synchronized. Preserve tag-time contract validation, checksum/provenance instructions,
   unsigned-artifact disclosure, and honest SBOM scope.

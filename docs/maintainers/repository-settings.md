@@ -49,8 +49,8 @@ follow-up verification.
       protection where GitHub makes them available.
 - [x] Keep the default workflow token read-only. Grant write scopes only to the smallest individual
       job, as the release, provenance, and Scorecard workflows do.
-- [x] Restrict Actions to GitHub-maintained, pnpm, and OpenSSF actions used by this repository; all
-      action references must remain pinned to a full commit SHA.
+- [x] Restrict Actions to GitHub-maintained, Anchore SBOM, pnpm, and OpenSSF actions used by this
+      repository; all action references must remain pinned to a full commit SHA.
 - [x] Keep all `github/codeql-action/*` components on one release SHA and in one Dependabot group;
       the components share runtime state and partial upgrades fail closed.
 - [x] Enforce immutable future GitHub Releases and keep release automation draft-first so every asset

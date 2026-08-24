@@ -1,0 +1,7 @@
+exclude:
+  - ./.git/**
+  - ./.release-control/**
+  - ./target/**
+  - ./node_modules/**
+  - ./**/node_modules/**
+  - ./**/dist/**

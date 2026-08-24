@@ -2,7 +2,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const repository = resolve(import.meta.dirname, "..");
+const repository = process.env.VEYRA_RELEASE_SOURCE
+  ? resolve(process.env.VEYRA_RELEASE_SOURCE)
+  : resolve(import.meta.dirname, "..");
 const failures = [];
 let checks = 0;
 
@@ -26,12 +28,18 @@ function readJson(path) {
 }
 
 const requireTag = process.argv.includes("--require-tag");
+const allowRecovery = process.argv.includes("--allow-recovery");
 const suppliedTag = process.argv
   .slice(2)
-  .find((argument) => argument !== "--require-tag");
+  .find(
+    (argument) =>
+      argument !== "--require-tag" && argument !== "--allow-recovery",
+  );
 const rootManifest = readJson("package.json");
 const version = rootManifest.version;
 const tag = suppliedTag ?? `v${version}`;
+
+check(!allowRecovery || requireTag, "--allow-recovery requires --require-tag");
 
 check(
   /^v\d+\.\d+\.\d+$/.test(tag),
@@ -98,14 +106,18 @@ check(
 );
 if (existsSync(repositoryPath(releaseNotesPath))) {
   const releaseNotes = readText(releaseNotesPath);
-  for (const marker of [
+  const markers = [
     `# Veyra ${tag}`,
     "## Verify the download",
     "## Security and trust boundary",
     "unsigned",
     "https://github.com/tang-vu/veyra/issues/4",
     "gh attestation verify",
-  ]) {
+  ];
+  if (!allowRecovery) {
+    markers.push("Syft 1.42.3", "release-manifest.json");
+  }
+  for (const marker of markers) {
     check(
       releaseNotes.includes(marker),
       `${releaseNotesPath} must disclose or document: ${marker}`,
@@ -114,25 +126,50 @@ if (existsSync(repositoryPath(releaseNotesPath))) {
 }
 
 if (requireTag) {
+  const expectedTagRef = `refs/tags/${tag}`;
+  const isTagPush =
+    process.env.GITHUB_EVENT_NAME === "push" &&
+    process.env.GITHUB_REF === expectedTagRef;
+  const isProtectedMainRecovery =
+    allowRecovery &&
+    process.env.GITHUB_EVENT_NAME === "workflow_dispatch" &&
+    process.env.GITHUB_REF === "refs/heads/main";
   check(
-    process.env.GITHUB_REF === `refs/tags/${tag}`,
-    `release workflow must run from refs/tags/${tag}`,
+    isTagPush || isProtectedMainRecovery,
+    `release workflow must run from ${expectedTagRef}, or an explicit recovery must run from protected main`,
+  );
+  check(
+    !allowRecovery || isProtectedMainRecovery,
+    "--allow-recovery is valid only for workflow_dispatch from refs/heads/main",
   );
   const head = execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: repository,
     encoding: "utf8",
   }).trim();
-  const taggedCommit = execFileSync("git", ["rev-parse", `${tag}^{commit}`], {
-    cwd: repository,
-    encoding: "utf8",
-  }).trim();
+  const tagObjectType = execFileSync(
+    "git",
+    ["cat-file", "-t", expectedTagRef],
+    {
+      cwd: repository,
+      encoding: "utf8",
+    },
+  ).trim();
+  check(tagObjectType === "tag", `${tag} must be an annotated tag`);
+  const taggedCommit = execFileSync(
+    "git",
+    ["rev-parse", `${expectedTagRef}^{commit}`],
+    {
+      cwd: repository,
+      encoding: "utf8",
+    },
+  ).trim();
   check(
     taggedCommit === head,
     `${tag} must resolve to the checked-out commit ${head}`,
   );
   check(
-    !process.env.GITHUB_SHA || process.env.GITHUB_SHA === head,
-    "GITHUB_SHA must match the checked-out annotated tag commit",
+    !isTagPush || process.env.GITHUB_SHA === head,
+    "a tag-push GITHUB_SHA must match the checked-out annotated tag commit",
   );
 }
 

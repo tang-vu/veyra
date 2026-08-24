@@ -5,6 +5,12 @@ Changelog conventions.
 
 ## [Unreleased]
 
+### Fixed
+
+- Made release recovery rebuild an existing immutable annotated tag from protected `main`, and
+  replaced the default-branch-only Dependency Graph SBOM export with a full-SHA-pinned Syft scan of
+  the exact release checkout.
+
 ## [0.1.0] - 2026-08-24
 
 ### Added
