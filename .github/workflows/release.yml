@@ -183,7 +183,7 @@ jobs:
             sha256sum --check "$checksum"
           done
 
-      - name: Create GitHub release
+      - name: Create immutable-ready GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -193,4 +193,5 @@ jobs:
             echo "release $GITHUB_REF_NAME already exists; publish a new patch version instead" >&2
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "Veyra $GITHUB_REF_NAME"
+          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --generate-notes --title "Veyra $GITHUB_REF_NAME"
+          gh release edit "$GITHUB_REF_NAME" --draft=false

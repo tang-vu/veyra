@@ -115,6 +115,26 @@ client-boundary changes require a negative/adversarial regression, not only a su
 - Do not add generated binaries, vendored archives, package tarballs, local databases, browser traces,
   test results, or release artifacts to Git.
 
+## Hosted OSS invariants
+
+- Required status checks must report a conclusion on every matching pull request. Do not make a
+  path-filtered workflow a global required check; either run its stable check on every pull request
+  or keep it conditional and non-required.
+- Preserve the host-side Actions allowlist and full-SHA enforcement. Adding a third-party Action
+  also requires an authorized maintainer to narrow-update that allowlist; never broaden it to all
+  verified or all marketplace Actions for convenience.
+- GitHub Releases are immutable. Release automation must create a draft, attach and verify every
+  asset, and publish only after the draft is complete. Never replace an asset or move a published
+  release tag.
+- Repository rulesets protect `main` and `v*` tags. Do not rename required check contexts or weaken
+  pull-request, linear-history, force-push, deletion, tag, or conversation-resolution rules without
+  documenting the migration and verifying the resulting host state.
+- Repository files cannot prove hosted settings. With authenticated read access, run
+  `corepack pnpm oss:host-check` after changing workflows, release policy, or community/security
+  settings. A host gate failure is evidence of drift, not a reason to weaken the local contract.
+- Host mutations remain maintainer-only. When authority is absent, prepare exact documented changes
+  and report the unverified host gap; never claim a setting was applied from source files alone.
+
 ## Documentation and community
 
 - Write for users and outside contributors who lack private context. Examples must be runnable and
