@@ -68,5 +68,7 @@ Changelog conventions.
   immutable GitHub Release with explicit least-privilege permissions.
 - Pinned `cargo-fuzz`/libFuzzer harnesses continuously exercise canonical protocol handling and
   component-aware resource containment on pull requests, `main`, and a longer weekly schedule.
+- CodeQL Action components are pinned to one verified upstream release commit and grouped as a
+  single Dependabot update so partial version changes cannot break analysis initialization.
 
 [Unreleased]: https://github.com/tang-vu/veyra/commits/main

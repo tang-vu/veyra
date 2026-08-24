@@ -336,3 +336,22 @@ The active `Protect main` ruleset now requires that exact context alongside Linu
 dependency review, and CodeQL, with no bypass actor; the read-only hosted gate passes 71 assertions.
 The tracked `glib` alert remains open, and no tag, release, registry package, reviewer identity,
 signing identity, or Best Practices attestation was fabricated as part of this work.
+
+## 2026-08-24 - atomic CodeQL Action maintenance
+
+After Dependabot re-indexed the hardened repository, it opened pull requests #7 through #10 for the
+four `github/codeql-action/*` entry points independently. Updating `init`, `autobuild`, or `analyze`
+alone failed with an explicit loaded-version/running-version mismatch; the green `upload-sarif`
+update did not make a partial family upgrade safe. This exposed a maintenance flaw rather than a
+project-code regression.
+
+All four entry points now use the verified upstream `v4.37.8` commit
+`db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28`. Dependabot groups the family with
+`github/codeql-action/*`, and the human/AI contract plus `oss:check` require exactly one reference
+to each entry point with one common SHA and release comment. Future partial upgrades therefore fail
+the source policy even if a single component appears independently mergeable.
+
+Pre-push verification passed Prettier, actionlint 1.7.12 across all six workflows, the expanded
+`oss:check` (`321` assertions), and the read-only hosted gate (`71` assertions). GitHub's tag API was
+followed through the annotated `v4.37.8` tag to its target commit, whose commit verification reports
+`valid`.

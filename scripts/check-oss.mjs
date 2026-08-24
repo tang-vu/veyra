@@ -321,6 +321,7 @@ const workflowDirectory = repositoryPath(".github/workflows");
 const workflowFiles = readdirSync(workflowDirectory)
   .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"))
   .sort();
+const codeqlActionReferences = [];
 
 for (const file of workflowFiles) {
   const workflow = readFileSync(resolve(workflowDirectory, file), "utf8");
@@ -386,6 +387,12 @@ for (const file of workflowFiles) {
     if (action.startsWith("actions/checkout@")) {
       checkoutCount += 1;
     }
+    if (action.startsWith("github/codeql-action/")) {
+      const [actionName, commitSha = ""] = action.split("@");
+      const releaseVersion =
+        versionComment.match(/\bv\d+\.\d+\.\d+\b/)?.[0] ?? "";
+      codeqlActionReferences.push({ actionName, commitSha, releaseVersion });
+    }
   }
 
   const hardenedCheckoutCount = (
@@ -396,6 +403,29 @@ for (const file of workflowFiles) {
     `.github/workflows/${file} must disable persisted credentials on every checkout`,
   );
 }
+
+for (const requiredAction of [
+  "github/codeql-action/init",
+  "github/codeql-action/autobuild",
+  "github/codeql-action/analyze",
+  "github/codeql-action/upload-sarif",
+]) {
+  check(
+    codeqlActionReferences.filter(
+      ({ actionName }) => actionName === requiredAction,
+    ).length === 1,
+    `${requiredAction} must appear exactly once across the hosted security workflows`,
+  );
+}
+check(
+  new Set(codeqlActionReferences.map(({ commitSha }) => commitSha)).size === 1,
+  "all github/codeql-action components must use the same immutable release commit",
+);
+check(
+  new Set(codeqlActionReferences.map(({ releaseVersion }) => releaseVersion))
+    .size === 1,
+  "all github/codeql-action components must carry the same release version comment",
+);
 
 const securityWorkflow = readText(".github/workflows/security.yml");
 check(
@@ -462,6 +492,12 @@ const dependabot = readText(".github/dependabot.yml");
 check(
   /^\s+directory:\s+\/fuzz\s*$/m.test(dependabot),
   "Dependabot must monitor the isolated fuzz Cargo workspace",
+);
+check(
+  dependabot.includes(
+    'groups:\n      codeql-action:\n        patterns:\n          - "github/codeql-action/*"',
+  ),
+  "Dependabot must update the version-coupled CodeQL Action family atomically",
 );
 
 const ciWorkflow = readText(".github/workflows/ci.yml");
