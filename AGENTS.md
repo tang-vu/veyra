@@ -145,6 +145,9 @@ client-boundary changes require a negative/adversarial regression, not only a su
   `docs/releases/vX.Y.Z.md` notes must agree on one version. Preserve the tag-time release-contract
   check and disclose unsigned artifacts, residual security risk, package-registry status, checksum
   verification, provenance verification, and SBOM scope in those notes.
+- Curated notes are rendered both as repository files and as GitHub Release metadata. Use absolute,
+  tag-pinned HTTPS links for repository documents; never use a file-relative link whose base changes
+  on the Release page. Preserve the release-contract assertions that enforce this dual-use format.
 - Repository rulesets protect `main` and `v*` tags. Do not rename the required Linux, Windows,
   minimum-Node, dependency-review, CodeQL, or security-boundary fuzz check contexts, or weaken
   pull-request, linear-history, force-push, deletion, tag, or conversation-resolution rules without

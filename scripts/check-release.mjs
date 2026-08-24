@@ -106,6 +106,30 @@ check(
 );
 if (existsSync(repositoryPath(releaseNotesPath))) {
   const releaseNotes = readText(releaseNotesPath);
+  const inlineLinks = [
+    ...releaseNotes.matchAll(/\[[^\]]+\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g),
+  ].map((match) => match[1]);
+  check(
+    inlineLinks.length > 0,
+    `${releaseNotesPath} must contain reviewable documentation links`,
+  );
+  check(
+    inlineLinks.every((link) => link.startsWith("https://")),
+    `${releaseNotesPath} must use absolute HTTPS Markdown links because GitHub Release notes do not preserve file-relative context`,
+  );
+  for (const [label, link] of [
+    [
+      "threat model",
+      `https://github.com/tang-vu/veyra/blob/${tag}/docs/security/threat-model.md`,
+    ],
+    ["changelog", `https://github.com/tang-vu/veyra/blob/${tag}/CHANGELOG.md`],
+    ["roadmap", `https://github.com/tang-vu/veyra/blob/${tag}/ROADMAP.md`],
+  ]) {
+    check(
+      releaseNotes.includes(`[${label}](${link})`),
+      `${releaseNotesPath} must use the tag-pinned ${label} link: ${link}`,
+    );
+  }
   const markers = [
     `# Veyra ${tag}`,
     "## Verify the download",
