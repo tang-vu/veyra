@@ -39,6 +39,6 @@
     "desktop:build": "pnpm --filter @veyra/desktop tauri build"
   },
   "devDependencies": {
-    "prettier": "3.6.2"
+    "prettier": "3.9.6"
   }
 }
