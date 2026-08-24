@@ -297,3 +297,42 @@ explicit: no transferable project-private conduct contact or signing identity ex
 release tags are therefore not required yet, package/recovery ownership needs periodic manual
 review, and platform code signing plus an attested multi-ecosystem SBOM remain future work. No tag,
 release, or registry package was created.
+
+## 2026-08-24 - OpenSSF finding triage and continuous boundary fuzzing
+
+The post-baseline Scorecard run was successful but correctly retained seven diagnostics. They were
+reviewed individually instead of being dismissed for a cleaner dashboard:
+
+- branch protection scores below maximum because a sole author cannot supply an independent
+  approval, CODEOWNERS review, or last-push approval without inventing another maintainer;
+- the security-policy check found policy text but no direct reporting link;
+- no recognized fuzzing integration existed;
+- the vulnerability check counted 17 RustSec/OSV entries in Tauri's target-specific GTK3 dependency
+  family, while Dependabot exposed the one medium `glib` alert tracked in issue #4;
+- code-review history has no independent approved changesets yet;
+- the repository is younger than 90 days; and
+- no OpenSSF Best Practices self-assessment has been submitted by a real project owner.
+
+The two source-actionable findings are now addressed without changing runtime behavior. `SECURITY.md`
+links directly to GitHub private vulnerability reporting. An isolated, non-published `fuzz/`
+workspace adds pinned `cargo-fuzz 0.13.2`, `libfuzzer-sys 0.4.13`, and a dated nightly toolchain.
+`canonical_protocol` covers arbitrary canonical JSON/digest stability; `resource_scope` covers
+component-aware filesystem and HTTP containment plus exact process and generic scopes. Inputs,
+timeouts, input length, and RSS are bounded. Pull requests and `main` run 30-second sessions per
+target, while the weekly schedule runs five minutes per target. Dependabot monitors the separate
+lockfile, Cargo license policy explicitly accepts libFuzzer's NCSA component, and the AI maintainer
+contract requires future parsing or containment changes to preserve the relevant target.
+
+Local Ubuntu WSL verification compiled both harnesses with warnings denied and completed 10,000
+inputs per target without a crash or timeout. The canonical target reached 1,071 coverage edges and
+the resource target reached 348. The full Windows GNU project gate then passed 109 Rust tests, 15
+JavaScript/TypeScript/UI tests, all 16 schemas, seven Rust and two npm package archives, dependency
+policy, 64 eval scenarios (`63` passed, `1` environment-limited, `0` failed), and the deterministic
+commit/verify/rollback demo. `oss:check` passed 314 assertions, the fuzz dependency policy passed
+advisories/licenses/sources, and actionlint 1.7.12 accepted all six workflows.
+
+The first protected pull-request run completed `Fuzz security boundaries` successfully in 2m20s.
+The active `Protect main` ruleset now requires that exact context alongside Linux, Windows MSVC,
+dependency review, and CodeQL, with no bypass actor; the read-only hosted gate passes 71 assertions.
+The tracked `glib` alert remains open, and no tag, release, registry package, reviewer identity,
+signing identity, or Best Practices attestation was fabricated as part of this work.
