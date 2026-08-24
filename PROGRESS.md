@@ -240,7 +240,7 @@ journals.
   seven publishable crates and `npm pack --dry-run --json` output for both public npm packages,
   requiring self-contained README/license/source or distribution content and rejecting local state,
   generated junk, and undeclared files.
-- Added JavaScript/TypeScript CodeQL analysis, dependency review for changed manifests and lockfiles,
+- Added JavaScript/TypeScript CodeQL analysis, dependency review on every pull request,
   and OpenSSF Scorecard SARIF publication. Release packaging now includes README/license material,
   verifies cross-platform checksums, creates Sigstore-backed provenance inside the job that actually
   built each binary, and creates the tagged GitHub Release without replacing an existing version.
@@ -286,10 +286,14 @@ assets, and only then publishes it.
 
 The new read-only `corepack pnpm oss:host-check` first failed on all missing protections, then passed
 69 assertions after the host configuration was applied. The API-visible maintainer audit found one
-direct administrator and no deploy keys, webhooks, environments, Dependabot alerts, or secret alerts.
-The refreshed Scorecard SARIF reduced the posture findings to one deliberate branch-protection
-diagnostic: independent approval, CODEOWNERS review, and last-push approval cannot be satisfied by a
-sole maintainer. Remaining human/roadmap work is explicit: no transferable project-private conduct
-contact or signing identity exists, signed release tags are therefore not required yet,
-package/recovery ownership needs periodic manual review, and platform code signing plus an attested
-multi-ecosystem SBOM remain future work. No tag, release, or registry package was created.
+direct administrator and no deploy keys, webhooks, environments, or secret alerts. After dependency
+graph indexing completed, GitHub surfaced `GHSA-wrw7-89jp-8q8g` for Tauri's Linux-only transitive
+`glib 0.18.5`; Dependabot confirmed `0.18.5` is the latest resolvable version while the fix begins at
+`0.20.0`. The alert remains open rather than being dismissed for scorekeeping, and
+[issue #4](https://github.com/tang-vu/veyra/issues/4) records the dependency path, current exposure,
+controls, upstream references, and exit criteria. Independent approval, CODEOWNERS review, and
+last-push approval also remain unavailable with one maintainer. Remaining human/roadmap work is
+explicit: no transferable project-private conduct contact or signing identity exists, signed
+release tags are therefore not required yet, package/recovery ownership needs periodic manual
+review, and platform code signing plus an attested multi-ecosystem SBOM remain future work. No tag,
+release, or registry package was created.

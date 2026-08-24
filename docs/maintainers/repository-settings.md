@@ -58,12 +58,14 @@ follow-up verification.
       recovery access at least quarterly.
 
 The 2026-08-24 API audit found one direct administrator and no deploy keys, webhooks, environments,
-Dependabot alerts, or secret-scanning alerts. The account does not expose the organization-only
-non-provider-pattern and validity-check options; default secret scanning and push protection remain
-enabled. The refreshed Scorecard SARIF retains one branch-protection diagnostic because approvals,
-CODEOWNERS review, and last-push approval cannot be independently satisfied by the sole maintainer;
-do not invent a reviewer to raise the score. Package ownership and recovery access still require a
-manual quarterly review.
+or secret-scanning alerts. Dependency-graph indexing surfaced one medium transitive `glib 0.18`
+alert that Tauri v2 cannot currently resolve; it remains open and is tracked in
+[issue #4](https://github.com/tang-vu/veyra/issues/4) with explicit exit criteria. The account does
+not expose the organization-only non-provider-pattern and validity-check options; default secret
+scanning and push protection remain enabled. The refreshed Scorecard SARIF retains diagnostics for
+the tracked advisory and for independent approvals/CODEOWNERS/last-push approval that cannot be
+satisfied by the sole maintainer; do not dismiss a real alert or invent a reviewer to raise the
+score. Package ownership and recovery access still require a manual quarterly review.
 
 `CODEOWNERS`, sponsorship, package-registry publication, and signing identities require real named
 owners or accounts. Do not invent them in source control merely to satisfy a checklist.

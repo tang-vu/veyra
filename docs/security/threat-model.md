@@ -88,7 +88,10 @@ another resolved dependency calls that API, and this release produces a Windows 
 carry unmaintained notices with no safe upstream upgrade. The security gate still denies all known
 vulnerabilities, direct unmaintained dependencies, other unsound advisories, wildcard dependencies,
 unknown registries, unknown Git sources, and unapproved licenses. Remove the exception as soon as
-Tauri moves off the affected GTK stack.
+Tauri moves off the affected GTK stack. [Issue #4](https://github.com/tang-vu/veyra/issues/4) tracks
+the upstream constraint and exit criteria; the Dependabot alert remains open. Re-review the issue
+before publishing any Linux desktop artifact. Linux CLI/server archives do not link this
+target-specific desktop graph.
 
 ## Explicit non-goals
 
