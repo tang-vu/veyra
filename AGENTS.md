@@ -137,6 +137,10 @@ client-boundary changes require a negative/adversarial regression, not only a su
 - GitHub Releases are immutable. Release automation must create a draft, attach and verify every
   asset, and publish only after the draft is complete. Never replace an asset or move a published
   release tag.
+- Recover an unpublished tagged release only through the documented workflow on protected `main`.
+  Require an existing annotated version tag resolving to every exact build checkout, rebuild and
+  re-attest all outputs, preserve draft-first publication, and never delete, recreate, or move the
+  tag to absorb workflow changes.
 - A release tag, Cargo workspace, npm workspaces, Tauri bundle, dated changelog section, and curated
   `docs/releases/vX.Y.Z.md` notes must agree on one version. Preserve the tag-time release-contract
   check and disclose unsigned artifacts, residual security risk, package-registry status, checksum

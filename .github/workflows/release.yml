@@ -5,6 +5,16 @@ on:
     tags:
       - "v[0-9]*.[0-9]*.[0-9]*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing annotated vX.Y.Z tag to recover from protected main; leave empty for a build-only dry run
+        required: false
+        type: string
+
+env:
+  VEYRA_RELEASE_REF: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+  VEYRA_RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+  VEYRA_PUBLISH_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != '' }}
 
 permissions:
   contents: read
@@ -12,13 +22,35 @@ permissions:
 jobs:
   release-contract:
     name: Validate release contract
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Validate manual recovery context
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "release recovery must be dispatched from protected main" >&2
+            exit 1
+          }
+          [[ "$VEYRA_RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "release_tag must be an existing vX.Y.Z tag" >&2
+            exit 1
+          }
+
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.VEYRA_RELEASE_REF }}
+          persist-credentials: false
+
+      - name: Check out protected release-control revision
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-control
           persist-credentials: false
 
       - name: Install pinned Node
@@ -27,10 +59,21 @@ jobs:
           node-version-file: .node-version
 
       - name: Match tag, manifests, changelog, and release notes
-        run: node scripts/check-release.mjs "$GITHUB_REF_NAME" --require-tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            node scripts/check-release.mjs "$VEYRA_RELEASE_TAG" --require-tag
+          elif [[ "$VEYRA_PUBLISH_RELEASE" == "true" ]]; then
+            VEYRA_RELEASE_SOURCE="$GITHUB_WORKSPACE" \
+              node .release-control/scripts/check-release.mjs "$VEYRA_RELEASE_TAG" --require-tag --allow-recovery
+          else
+            node scripts/check-release.mjs
+          fi
 
   core-binaries:
     name: Core binaries (${{ matrix.name }})
+    needs: release-contract
     permissions:
       artifact-metadata: write
       attestations: write
@@ -50,6 +93,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.VEYRA_RELEASE_REF }}
           persist-credentials: false
 
       - name: Install pinned Rust toolchain
@@ -116,7 +160,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "packaged reversible demo failed" }
 
       - name: Attest core archive
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ env.VEYRA_RELEASE_ARTIFACT }}
@@ -131,6 +175,7 @@ jobs:
 
   desktop-windows:
     name: Unsigned Windows desktop bundle
+    needs: release-contract
     runs-on: windows-latest
     timeout-minutes: 35
     permissions:
@@ -142,6 +187,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.VEYRA_RELEASE_REF }}
           persist-credentials: false
 
       - name: Install pinned Rust toolchain
@@ -178,7 +224,7 @@ jobs:
           "$hash  $($installer.Name)" | Set-Content -Encoding ascii (Join-Path dist "$($installer.Name).sha256")
 
       - name: Attest desktop installer
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/*.exe
@@ -193,7 +239,7 @@ jobs:
 
   release-sbom:
     name: Release dependency SBOM
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-contract
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -205,26 +251,51 @@ jobs:
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.VEYRA_RELEASE_REF }}
           persist-credentials: false
 
-      - name: Export and validate SPDX dependency snapshot
+      - name: Check out protected SBOM configuration
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-control
+          persist-credentials: false
+
+      - name: Prepare SBOM output
+        shell: bash
+        run: mkdir -p dist
+
+      - name: Generate SPDX dependency snapshot with Syft
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         env:
-          GH_TOKEN: ${{ github.token }}
+          SYFT_SOURCE_NAME: veyra
+          SYFT_SOURCE_VERSION: ${{ env.VEYRA_RELEASE_TAG }}
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/veyra-${{ env.VEYRA_RELEASE_TAG }}.spdx.json
+          syft-version: v1.42.3
+          config: ${{ inputs.release_tag != '' && '.release-control/.syft.yaml' || '.syft.yaml' }}
+          dependency-snapshot: false
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Validate and checksum SPDX dependency snapshot
         shell: bash
         run: |
           set -euo pipefail
-          default_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
-          if [[ "$default_sha" != "$GITHUB_SHA" ]]; then
-            echo "dependency-graph SBOM is default-branch scoped; main moved beyond the release commit" >&2
-            exit 1
-          fi
-          mkdir -p dist
-          sbom_name="veyra-$GITHUB_REF_NAME.spdx.json"
-          gh api "repos/$GITHUB_REPOSITORY/dependency-graph/sbom" --jq .sbom | jq --sort-keys . > "dist/$sbom_name"
-          jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 0)' "dist/$sbom_name" >/dev/null
+          sbom_name="veyra-$VEYRA_RELEASE_TAG.spdx.json"
+          jq -e '
+            .spdxVersion == "SPDX-2.3" and
+            (.packages | length > 0) and
+            ([.packages[].externalRefs[]?.referenceLocator] | any(startswith("pkg:cargo/"))) and
+            ([.packages[].externalRefs[]?.referenceLocator] | any(startswith("pkg:npm/")))
+          ' "dist/$sbom_name" >/dev/null
           (cd dist && sha256sum "$sbom_name" > "$sbom_name.sha256")
 
       - name: Attest release SBOM
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/*.spdx.json
@@ -239,7 +310,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     needs:
       - release-contract
       - core-binaries
@@ -249,12 +320,29 @@ jobs:
     timeout-minutes: 15
     permissions:
       actions: read
+      artifact-metadata: write
+      attestations: write
       contents: write
+      id-token: write
     steps:
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.VEYRA_RELEASE_REF }}
           persist-credentials: false
+
+      - name: Check out protected release-control revision
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-control
+          persist-credentials: false
+
+      - name: Install pinned Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
 
       - name: Download release artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -267,7 +355,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          notes_path="docs/releases/$GITHUB_REF_NAME.md"
+          notes_path="docs/releases/$VEYRA_RELEASE_TAG.md"
+          if [[ -d .release-control ]]; then
+            notes_path=".release-control/$notes_path"
+          fi
           test -s "$notes_path"
           cp LICENSE README.md CHANGELOG.md dist/
           cp "$notes_path" dist/RELEASE_NOTES.md
@@ -280,16 +371,32 @@ jobs:
             sha256sum --check "$checksum"
           done
 
+      - name: Create release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_script="scripts/create-release-manifest.mjs"
+          if [[ -d .release-control ]]; then
+            manifest_script=".release-control/$manifest_script"
+          fi
+          VEYRA_RELEASE_SOURCE="$GITHUB_WORKSPACE" \
+            node "$manifest_script" "$VEYRA_RELEASE_TAG" dist
+
+      - name: Attest release manifest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*.release-manifest.json
+
       - name: Create immutable-ready GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "release $GITHUB_REF_NAME already exists; publish a new patch version instead" >&2
+          if gh release view "$VEYRA_RELEASE_TAG" >/dev/null 2>&1; then
+            echo "release $VEYRA_RELEASE_TAG already exists; publish a new patch version instead" >&2
             exit 1
           fi
-          release_notes="$(cat "docs/releases/$GITHUB_REF_NAME.md")"
-          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --fail-on-no-commits --generate-notes --notes "$release_notes" --title "Veyra $GITHUB_REF_NAME"
-          gh release edit "$GITHUB_REF_NAME" --draft=false
+          release_notes="$(cat dist/RELEASE_NOTES.md)"
+          gh release create "$VEYRA_RELEASE_TAG" dist/* --draft --verify-tag --fail-on-no-commits --generate-notes --notes "$release_notes" --title "Veyra $VEYRA_RELEASE_TAG"
+          gh release edit "$VEYRA_RELEASE_TAG" --draft=false

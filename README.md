@@ -67,14 +67,16 @@ Prerequisites:
 
 The [v0.1.0 release](https://github.com/tang-vu/veyra/releases/tag/v0.1.0) provides Linux and Windows
 CLI/daemon archives plus an unsigned Windows desktop installer. Each binary artifact has a SHA-256
-checksum and a GitHub build-provenance attestation; the release also includes an attested SPDX 2.3
-repository dependency snapshot. Verify downloads before execution:
+checksum and a GitHub build-provenance attestation; the release also includes a Syft-generated,
+attested SPDX 2.3 repository dependency snapshot and an attested release manifest binding asset
+digests to the source-tag and release-control commits. Verify downloads before execution:
 
 ```sh
 gh release download v0.1.0 --repo tang-vu/veyra --dir dist
 cd dist
 for checksum in *.sha256; do sha256sum --check "$checksum"; done
 gh attestation verify ./veyra-linux-x86_64.tar.gz --repo tang-vu/veyra
+gh attestation verify ./veyra-v0.1.0.release-manifest.json --repo tang-vu/veyra
 ```
 
 See the [release notes](docs/releases/v0.1.0.md) for artifact scope, Windows verification, and known

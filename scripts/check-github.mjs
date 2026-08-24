@@ -149,10 +149,11 @@ check(
 );
 check(
   sameMembers(selectedActions?.patterns_allowed, [
+    "anchore/sbom-action@*",
     "ossf/scorecard-action@*",
     "pnpm/action-setup@*",
   ]),
-  "third-party Action allowlist must contain only pnpm and OpenSSF Scorecard",
+  "third-party Action allowlist must contain only Anchore SBOM, pnpm, and OpenSSF Scorecard",
 );
 
 const workflowPolicy = request(
