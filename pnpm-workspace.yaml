@@ -3,3 +3,6 @@ packages:
   - "packages/*"
 
 minimumReleaseAge: 1440
+
+overrides:
+  "@types/node": "22.20.1"

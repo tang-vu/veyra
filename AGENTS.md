@@ -115,6 +115,9 @@ client-boundary changes require a negative/adversarial regression, not only a su
 - Treat `github/codeql-action/init`, `autobuild`, `analyze`, and `upload-sarif` as one release unit:
   keep the same SHA/version across workflows and preserve their Dependabot group. Never accept a
   partial family update merely because one component's pull request is green.
+- Keep `@types/node` on the minimum supported major recorded in `.node-version-min`, retain that
+  compatibility job, and keep `.node-version` as the current default toolchain. A type-major update
+  requires an intentional minimum-runtime compatibility change, not a type-only Dependabot merge.
 - Security-boundary parsing and containment changes must update the relevant `fuzz/` target. Keep
   `cargo-fuzz`, its nightly toolchain, harness dependencies, input limits, and execution time bounded
   and pinned; never weaken a discovered invariant or commit corpora/crash artifacts to make fuzzing
@@ -134,9 +137,9 @@ client-boundary changes require a negative/adversarial regression, not only a su
   asset, and publish only after the draft is complete. Never replace an asset or move a published
   release tag.
 - Repository rulesets protect `main` and `v*` tags. Do not rename the required Linux, Windows,
-  dependency-review, CodeQL, or security-boundary fuzz check contexts, or weaken pull-request,
-  linear-history, force-push, deletion, tag, or conversation-resolution rules without documenting
-  the migration and verifying the resulting host state.
+  minimum-Node, dependency-review, CodeQL, or security-boundary fuzz check contexts, or weaken
+  pull-request, linear-history, force-push, deletion, tag, or conversation-resolution rules without
+  documenting the migration and verifying the resulting host state.
 - Repository files cannot prove hosted settings. With authenticated read access, run
   `corepack pnpm oss:host-check` after changing workflows, release policy, or community/security
   settings. A host gate failure is evidence of drift, not a reason to weaken the local contract.

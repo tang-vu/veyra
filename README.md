@@ -59,7 +59,8 @@ The server, CLI, TypeScript SDK, and Tauri application are clients of that bound
 Prerequisites:
 
 - Rust 1.96 (the pinned toolchain is installed automatically by `rustup`)
-- Node.js 22 or newer and pnpm 11.20 (`corepack enable` is sufficient)
+- Node.js 22.23.2 LTS or a newer supported LTS and pnpm 11.20 (`corepack enable` is sufficient); CI
+  tests the minimum supported major while `.node-version` pins the default maintainer toolchain
 - platform prerequisites for [Tauri 2](https://v2.tauri.app/start/prerequisites/) only if building the desktop app
 
 Run the complete deterministic flow—no API key or paid service is used:

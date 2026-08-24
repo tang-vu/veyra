@@ -27,8 +27,8 @@ Protect `main` with a repository ruleset:
 - [x] require pull requests, resolved conversations, and at least one approval when another
       maintainer is available;
 - [x] dismiss stale approvals after security-sensitive changes;
-- [x] require the Linux full gate, Windows Rust gate, dependency review, CodeQL, and bounded
-      security-boundary fuzz checks;
+- [x] require the Linux full gate, Windows Rust gate, minimum-Node JavaScript gate, dependency
+      review, CodeQL, and bounded security-boundary fuzz checks;
 - [x] block force pushes and branch deletion, require linear history, and include administrators
       except during a documented emergency;
 - [x] restrict creation, update, and deletion of `v*` tags to release maintainers;

@@ -11,8 +11,10 @@ pull request.
 
 ## Setup
 
-Install Rust through `rustup`, Node.js 22+, and enable Corepack. Desktop work additionally requires
-the platform packages listed in the Tauri 2 prerequisites.
+Install Rust through `rustup`, Node.js 22.23.2 LTS or a newer supported LTS, and enable Corepack.
+`.node-version-min` records the tested minimum-major runtime while `.node-version` selects the
+default maintainer toolchain. Desktop work additionally requires the platform packages listed in
+the Tauri 2 prerequisites.
 
 ```sh
 corepack enable
