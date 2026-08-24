@@ -68,6 +68,7 @@ const requiredFiles = [
   ".github/pull_request_template.md",
   ".github/workflows/ci.yml",
   ".github/workflows/codeql.yml",
+  ".github/workflows/fuzz.yml",
   ".github/workflows/release.yml",
   ".github/workflows/scorecard.yml",
   ".github/workflows/security.yml",
@@ -85,6 +86,12 @@ const requiredFiles = [
   "Cargo.lock",
   "deny.toml",
   "docs/maintainers/repository-settings.md",
+  "fuzz/.gitignore",
+  "fuzz/Cargo.lock",
+  "fuzz/Cargo.toml",
+  "fuzz/README.md",
+  "fuzz/fuzz_targets/canonical_protocol.rs",
+  "fuzz/fuzz_targets/resource_scope.rs",
   "package.json",
   "pnpm-lock.yaml",
   "rust-toolchain.toml",
@@ -109,6 +116,7 @@ for (const marker of [
   "`goal.md` must not be recreated",
   "OSS change matrix",
   "pnpm oss:check",
+  "`cargo-fuzz`",
   "Never push, publish, deploy",
 ]) {
   check(
@@ -120,6 +128,13 @@ for (const marker of [
 check(
   readText(".github/copilot-instructions.md").includes("AGENTS.md"),
   ".github/copilot-instructions.md must delegate to the canonical AGENTS.md contract",
+);
+
+const privateAdvisoryUrl =
+  /https:\/\/github\.com\/tang-vu\/veyra\/security\/advisories\/new(?=[\s)'"\]}]|$)/;
+check(
+  privateAdvisoryUrl.test(readText("SECURITY.md")),
+  "SECURITY.md must link directly to GitHub private vulnerability reporting",
 );
 
 const advisoryTrackingUrl =
@@ -390,6 +405,63 @@ check(
 check(
   securityWorkflow.includes("name: Review dependency changes"),
   "dependency security must retain the stable required-check name",
+);
+
+const fuzzManifest = readText("fuzz/Cargo.toml");
+for (const marker of [
+  'arbitrary = { version = "=1.4.2"',
+  'libfuzzer-sys = "=0.4.13"',
+  'name = "canonical_protocol"',
+  'name = "resource_scope"',
+]) {
+  check(
+    fuzzManifest.includes(marker),
+    `fuzz/Cargo.toml is missing pinned harness contract: ${marker}`,
+  );
+}
+for (const target of ["canonical_protocol", "resource_scope"]) {
+  check(
+    readText(`fuzz/fuzz_targets/${target}.rs`).includes("libfuzzer_sys"),
+    `${target} must remain a real libFuzzer target`,
+  );
+}
+const fuzzIgnore = readText("fuzz/.gitignore");
+for (const localOutput of [
+  "/artifacts/",
+  "/corpus/",
+  "/coverage/",
+  "/target/",
+]) {
+  check(
+    fuzzIgnore.includes(localOutput),
+    `fuzz/.gitignore must exclude local output: ${localOutput}`,
+  );
+}
+
+const fuzzWorkflow = readText(".github/workflows/fuzz.yml");
+check(
+  !/^\s*pull_request:\s*\n\s+(?:paths|paths-ignore):/m.test(fuzzWorkflow),
+  "fuzzing must report a result on every pull request so it can remain a required check",
+);
+for (const marker of [
+  "name: Fuzz security boundaries",
+  "nightly-2026-08-20",
+  "cargo install cargo-fuzz --version 0.13.2 --locked",
+  "-max_len=4096",
+  "-rss_limit_mb=2048",
+  "fuzz run canonical_protocol",
+  "fuzz run resource_scope",
+]) {
+  check(
+    fuzzWorkflow.includes(marker),
+    `fuzz workflow is missing bounded pinned behavior: ${marker}`,
+  );
+}
+
+const dependabot = readText(".github/dependabot.yml");
+check(
+  /^\s+directory:\s+\/fuzz\s*$/m.test(dependabot),
+  "Dependabot must monitor the isolated fuzz Cargo workspace",
 );
 
 const ciWorkflow = readText(".github/workflows/ci.yml");

@@ -1,6 +1,8 @@
 # Veyra
 
 [![CI](https://github.com/tang-vu/veyra/actions/workflows/ci.yml/badge.svg)](https://github.com/tang-vu/veyra/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/tang-vu/veyra/actions/workflows/codeql.yml/badge.svg)](https://github.com/tang-vu/veyra/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/tang-vu/veyra/badge)](https://scorecard.dev/viewer/?uri=github.com/tang-vu/veyra)
 
 **Reversible execution for AI agents.**
 

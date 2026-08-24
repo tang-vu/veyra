@@ -232,10 +232,10 @@ journals.
   request template, `SUPPORT.md`, `RELEASING.md`, and a maintainer checklist for repository-host
   settings. `CODEOWNERS`, funding, package owners, and signing identities remain intentionally absent
   until real maintainers configure them.
-- Added the deterministic `oss:check` gate. It currently makes 269 assertions over community-health
-  files, AI instructions, public Rust/npm discovery metadata, exact license copies, retired-file
-  absence, workflow permissions, immutable 40-character Action SHAs, version comments, and disabled
-  checkout credential persistence.
+- Added the deterministic `oss:check` gate. Its initial baseline made 269 assertions over
+  community-health files, AI instructions, public Rust/npm discovery metadata, exact license copies,
+  retired-file absence, workflow permissions, immutable 40-character Action SHAs, version comments,
+  and disabled checkout credential persistence.
 - Added the post-build `package:check` gate. It inspects the actual Cargo package inventory for all
   seven publishable crates and `npm pack --dry-run --json` output for both public npm packages,
   requiring self-contained README/license/source or distribution content and rejecting local state,

@@ -244,17 +244,23 @@ check(
 const requiredContexts = (statusRule?.required_status_checks ?? []).map(
   (status) => status.context,
 );
-for (const context of [
+const expectedRequiredContexts = [
   "Analyze JavaScript and TypeScript",
   "Full gate (Linux)",
+  "Fuzz security boundaries",
   "Review dependency changes",
   "Rust gate (Windows MSVC)",
-]) {
+];
+for (const context of expectedRequiredContexts) {
   check(
     requiredContexts.includes(context),
     `required check is missing: ${context}`,
   );
 }
+check(
+  sameMembers(requiredContexts, expectedRequiredContexts),
+  "Protect main must not retain stale or unreviewed required checks",
+);
 
 const tagRuleset = rulesets.find(
   (ruleset) => ruleset.name === "Protect release tags",

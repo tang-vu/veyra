@@ -27,7 +27,8 @@ Protect `main` with a repository ruleset:
 - [x] require pull requests, resolved conversations, and at least one approval when another
       maintainer is available;
 - [x] dismiss stale approvals after security-sensitive changes;
-- [x] require the Linux full gate, Windows Rust gate, dependency review, and CodeQL checks;
+- [x] require the Linux full gate, Windows Rust gate, dependency review, CodeQL, and bounded
+      security-boundary fuzz checks;
 - [x] block force pushes and branch deletion, require linear history, and include administrators
       except during a documented emergency;
 - [x] restrict creation, update, and deletion of `v*` tags to release maintainers;
@@ -35,9 +36,9 @@ Protect `main` with a repository ruleset:
 
 The repository currently has one direct maintainer. `Protect main` therefore requires zero approvals
 until a second maintainer exists, but has no standing bypass actor; all other pull-request and check
-requirements also apply to the administrator. `Protect release tags` allows only the repository
-owner to bypass creation/update/deletion restrictions. Re-audit both rulesets when maintainership
-changes.
+requirements also apply to the administrator. `Fuzz security boundaries` is unconditional on pull
+requests so it can remain required. `Protect release tags` allows only the repository owner to bypass
+creation/update/deletion restrictions. Re-audit both rulesets when maintainership changes.
 
 An emergency bypass must be disclosed after the incident with the reason, affected commits, and
 follow-up verification.
@@ -62,10 +63,13 @@ or secret-scanning alerts. Dependency-graph indexing surfaced one medium transit
 alert that Tauri v2 cannot currently resolve; it remains open and is tracked in
 [issue #4](https://github.com/tang-vu/veyra/issues/4) with explicit exit criteria. The account does
 not expose the organization-only non-provider-pattern and validity-check options; default secret
-scanning and push protection remain enabled. The refreshed Scorecard SARIF retains diagnostics for
-the tracked advisory and for independent approvals/CODEOWNERS/last-push approval that cannot be
-satisfied by the sole maintainer; do not dismiss a real alert or invent a reviewer to raise the
-score. Package ownership and recovery access still require a manual quarterly review.
+scanning and push protection remain enabled. The refreshed Scorecard findings include the tracked
+GTK advisory family and independent approvals/CODEOWNERS/last-push approval that cannot be satisfied
+by the sole maintainer. Repository age, contributor diversity, signed releases, and an OpenSSF Best
+Practices self-assessment require time or real human ownership. The private-reporting link and actual
+libFuzzer integration are maintained in source; do not dismiss a real alert, invent a reviewer, or
+add ceremonial files merely to raise the score. Package ownership and recovery access still require
+a manual quarterly review.
 
 `CODEOWNERS`, sponsorship, package-registry publication, and signing identities require real named
 owners or accounts. Do not invent them in source control merely to satisfy a checklist.

@@ -1,0 +1,48 @@
+name: Fuzz
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: "11 2 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-boundaries:
+    name: Fuzz security boundaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VEYRA_FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '300' || '30' }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned nightly Rust toolchain
+        run: rustup toolchain install nightly-2026-08-20 --profile minimal
+
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+
+      - name: Fuzz canonical protocol handling
+        run: >-
+          cargo +nightly-2026-08-20 fuzz run canonical_protocol --
+          -max_total_time=${VEYRA_FUZZ_SECONDS} -timeout=10 -max_len=4096
+          -rss_limit_mb=2048
+
+      - name: Fuzz resource-scope containment
+        run: >-
+          cargo +nightly-2026-08-20 fuzz run resource_scope --
+          -max_total_time=${VEYRA_FUZZ_SECONDS} -timeout=10 -max_len=4096
+          -rss_limit_mb=2048
