@@ -379,6 +379,12 @@ check(
   "dependency security must retain the stable required-check name",
 );
 
+const ciWorkflow = readText(".github/workflows/ci.yml");
+check(
+  /^\s*push:\s*\n\s+branches:\s*\n\s+- main\s*$/m.test(ciWorkflow),
+  "CI push runs must target main; pull_request covers contributor branches without duplicate builds",
+);
+
 const releaseWorkflow = readText(".github/workflows/release.yml");
 const draftReleaseIndex = releaseWorkflow.indexOf("gh release create");
 const publishReleaseIndex = releaseWorkflow.indexOf(
