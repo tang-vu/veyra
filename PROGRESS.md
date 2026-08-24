@@ -355,3 +355,25 @@ Pre-push verification passed Prettier, actionlint 1.7.12 across all six workflow
 `oss:check` (`321` assertions), and the read-only hosted gate (`71` assertions). GitHub's tag API was
 followed through the annotated `v4.37.8` tag to its target commit, whose commit verification reports
 `valid`.
+
+## 2026-08-24 - minimum Node compatibility and deterministic tooling updates
+
+The first Dependabot cycle also opened PR #1 for Prettier 3.9.6 and PR #2 for `@types/node` 26.2.0.
+The Prettier update is within major version 3; its only source effect is the formatter's new canonical
+layout for one `JsonValue` union. The Node type update is intentionally not equivalent: the public
+manifests promise Node 22 support, while merging Node 26 declarations could allow code that passes
+type-checking but is absent from supported runtimes.
+
+The workspace now tests the current Node 22 LTS patch from `.node-version-min`, keeps the default
+maintainer toolchain in `.node-version`, pins direct and transitive Node declarations to the latest
+22.x type release, and tells Dependabot not to propose an isolated type-major change. The human/AI
+contract requires a deliberate compatibility migration before changing that major. The source gate
+checks the engine, both runtime pins, direct type version, pnpm override, workflow identity, and
+Dependabot policy as one contract.
+
+Local verification passed frozen pnpm installation and supply-chain policy, Prettier, TypeScript
+checks and lint, 15 JavaScript/TypeScript/UI tests, frontend and SDK builds, seven Rust plus two npm
+archive checks, production audit with no known vulnerability, actionlint 1.7.12, and `oss:check`
+with 342 assertions. Before the new hosted context existed, `oss:host-check` failed with exactly the
+missing `JavaScript gate (Node 22)` and exact-required-set assertions, proving that host drift cannot
+be silently reported as complete.

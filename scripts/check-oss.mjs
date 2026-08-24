@@ -83,6 +83,8 @@ const requiredFiles = [
   "ROADMAP.md",
   "SECURITY.md",
   "SUPPORT.md",
+  ".node-version",
+  ".node-version-min",
   "Cargo.lock",
   "deny.toml",
   "docs/maintainers/repository-settings.md",
@@ -94,6 +96,7 @@ const requiredFiles = [
   "fuzz/fuzz_targets/resource_scope.rs",
   "package.json",
   "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
   "rust-toolchain.toml",
   "scripts/check-github.mjs",
   "scripts/check-packages.mjs",
@@ -231,6 +234,14 @@ for (const packageDirectory of publicJavaScriptPackages) {
 
 const desktopManifest = readJson("apps/desktop/package.json");
 const tauriConfiguration = readJson("apps/desktop/src-tauri/tauri.conf.json");
+const nodeRuntimeVersion = normalized(readText(".node-version"));
+const minimumNodeVersion = normalized(readText(".node-version-min"));
+const nodeTypesVersion = desktopManifest.devDependencies?.["@types/node"] ?? "";
+const overriddenNodeTypesVersion = readText("pnpm-workspace.yaml").match(
+  /^\s*["']?@types\/node["']?:\s*["']?(\d+\.\d+\.\d+)["']?\s*$/m,
+)?.[1];
+const supportedNodeMajor =
+  rootManifest.engines?.node?.match(/^>=(\d+)\.\d+\.\d+$/)?.[1];
 check(
   desktopManifest.version === workspaceVersion,
   "apps/desktop/package.json version must match the workspace version",
@@ -238,6 +249,29 @@ check(
 check(
   tauriConfiguration.version === workspaceVersion,
   "the Tauri application version must match the workspace version",
+);
+check(
+  /^\d+\.\d+\.\d+$/.test(nodeRuntimeVersion) &&
+    /^\d+\.\d+\.\d+$/.test(minimumNodeVersion) &&
+    /^\d+\.\d+\.\d+$/.test(nodeTypesVersion),
+  "Node runtime pins and @types/node must use exact semantic versions",
+);
+check(
+  minimumNodeVersion.split(".")[0] === supportedNodeMajor,
+  ".node-version-min major must match the public minimum Node engine",
+);
+check(
+  minimumNodeVersion.split(".")[0] === nodeTypesVersion.split(".")[0],
+  "@types/node major must match the minimum supported Node major",
+);
+check(
+  overriddenNodeTypesVersion === nodeTypesVersion,
+  "the workspace must constrain transitive Node types to the reviewed direct version",
+);
+check(
+  Number(nodeRuntimeVersion.split(".")[0]) >=
+    Number(minimumNodeVersion.split(".")[0]),
+  "the default Node runtime cannot be older than the minimum compatibility runtime",
 );
 
 const cargoArguments = [];
@@ -499,12 +533,28 @@ check(
   ),
   "Dependabot must update the version-coupled CodeQL Action family atomically",
 );
+check(
+  dependabot.includes(
+    'dependency-name: "@types/node"\n        update-types:\n          - "version-update:semver-major"',
+  ),
+  "Dependabot must not advance Node type definitions beyond the pinned runtime major",
+);
 
 const ciWorkflow = readText(".github/workflows/ci.yml");
 check(
   /^\s*push:\s*\n\s+branches:\s*\n\s+- main\s*$/m.test(ciWorkflow),
   "CI push runs must target main; pull_request covers contributor branches without duplicate builds",
 );
+for (const marker of [
+  "name: JavaScript gate (Node 22)",
+  "node-version-file: .node-version-min",
+  "name: Verify minimum Node compatibility",
+]) {
+  check(
+    ciWorkflow.includes(marker),
+    `CI must retain minimum supported Node coverage: ${marker}`,
+  );
+}
 
 const releaseWorkflow = readText(".github/workflows/release.yml");
 const draftReleaseIndex = releaseWorkflow.indexOf("gh release create");

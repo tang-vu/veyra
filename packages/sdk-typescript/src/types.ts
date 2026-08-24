@@ -2,9 +2,7 @@
 
 export type JsonPrimitive = null | boolean | number | string;
 export type JsonValue =
-  | JsonPrimitive
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+  JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 export type Id = string;
 export type Timestamp = string;
 

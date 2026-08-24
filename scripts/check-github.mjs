@@ -248,6 +248,7 @@ const expectedRequiredContexts = [
   "Analyze JavaScript and TypeScript",
   "Full gate (Linux)",
   "Fuzz security boundaries",
+  "JavaScript gate (Node 22)",
   "Review dependency changes",
   "Rust gate (Windows MSVC)",
 ];

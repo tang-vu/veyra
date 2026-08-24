@@ -14,7 +14,8 @@ this repository; when these notes are shorter, `AGENTS.md` still applies.
   the corresponding contract changes.
 - Review every dependency for purpose, maintenance, license, advisories, and transitive impact. Pin
   GitHub Actions to full commit SHAs with version comments. Keep every `github/codeql-action/*`
-  component on one release SHA and in its atomic Dependabot group.
+  component on one release SHA and in its atomic Dependabot group. Keep `@types/node` on the minimum
+  supported Node major and preserve its compatibility job unless that public contract is upgraded.
 - Keep required checks unconditional on matching pull requests and preserve draft-first immutable
   releases, protected `main`/`v*` refs, and the host Actions allowlist.
 - Run `corepack pnpm oss:check` and all relevant gates before claiming completion. When authenticated

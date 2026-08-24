@@ -30,6 +30,12 @@ Changelog conventions.
 - Self-contained public Rust and JavaScript package metadata and archives, including READMEs,
   Apache-2.0 license text, registry discovery fields, and npm provenance configuration.
 
+### Changed
+
+- Updated Prettier within major version 3 and the default Node 24 LTS patch, added a Node 22
+  compatibility gate, and made Node type definitions track the minimum supported runtime major so
+  automated type-only upgrades cannot silently widen the runtime API surface.
+
 ### Security
 
 - Proposal-level authority is checked before adapters can observe targets, then reevaluated over the
