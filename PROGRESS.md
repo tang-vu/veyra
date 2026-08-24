@@ -459,3 +459,49 @@ passed 109 Rust tests, 15 JavaScript/TypeScript/UI tests, 16 generated schemas, 
 npm package archives, 63 passing evals, one documented environment-limited eval, and zero failed
 evals. `release:check` passed 21 assertions, `oss:check` passed 411, and actionlint 1.7.12 accepted all
 six workflows.
+
+## 2026-08-24 - v0.1.0 published release evidence
+
+The protected recovery implementation was squash-merged through pull request
+[#14](https://github.com/tang-vu/veyra/pull/14) at release-control commit
+`0529ff49a8948a898b5dd1da0b08e1e9726096cf`, with all nine required pull-request checks passing and
+no administrator bypass. Its main-branch CI, CodeQL, fuzz, and OpenSSF Scorecard runs also passed. A
+build-only [release dry run](https://github.com/tang-vu/veyra/actions/runs/32742309960) then passed the
+release contract, exact-tag SBOM generation, Linux and Windows archive builds and packaged smoke
+tests, and the unsigned Windows NSIS build while correctly skipping publication.
+
+The authorized [recovery release run](https://github.com/tang-vu/veyra/actions/runs/32743621982)
+completed successfully from protected `main`. It rebuilt product artifacts from the unchanged
+annotated tag source commit `8226d69af7471755357d71c6169509bde240c478`, while using the separately
+recorded protected release-control commit above. Every build, packaged smoke test, checksum,
+artifact attestation, release-manifest attestation, and final publish step passed. The resulting
+[Veyra v0.1.0 release](https://github.com/tang-vu/veyra/releases/tag/v0.1.0) is public, latest,
+non-prerelease, and GitHub-immutable, with 14 uploaded assets.
+
+All 14 assets were downloaded again from the public Release for independent post-publication
+verification. The five sibling checksum files matched the downloaded Linux archive, Windows
+archive, unsigned NSIS installer, SPDX document, and release manifest. The manifest's 12-file
+pre-manifest inventory matched every recorded byte size and SHA-256 digest, and bound the source tag,
+release-control revision, recovery mode, workflow ref, and run attempt. GitHub/Sigstore provenance
+verification passed for all five primary artifacts while requiring the exact `release.yml` signer,
+release-control digest, `refs/heads/main` source ref, and GitHub-hosted runner:
+
+```text
+bc5c1148e86992508128ef7d1a58a630cb84aeda511e29830db6c97481e3cd5e  veyra-linux-x86_64.tar.gz
+7f6f5f0ad5bdd5f3643eac0e0b197bc250c67f98cb2f973aab1fed45b8be1646  veyra-windows-x86_64.zip
+d61a4062bb0d3cbcf7bfa1fa9c2e74245c5d8241cdc9f0d5c6fa8e7a7aaf9025  Veyra_0.1.0_x64-setup.exe
+caf152928ffc46ad70f2ba8021b5a0d05a345a2501061743eee45a8f7215f142  veyra-v0.1.0.spdx.json
+68e8fbece53174ed46efa322ae9b3c8c09561609a381e859048b2f96a455cbad  veyra-v0.1.0.release-manifest.json
+```
+
+The downloaded Windows archive and Linux archive under Ubuntu WSL each ran `veyra 0.1.0`, daemon
+help, and the complete JSON demo successfully. Both demos committed one effect, authenticated one
+receipt, passed one verification, checked 39 audit events, rolled back, and removed the workspace
+file. The downloaded SPDX 2.3 document contains 829 packages, including 636 Cargo and 170 npm PURLs,
+and no file from the recovery control checkout.
+
+Publication does not remove the documented project limits. The Windows installer and binaries lack
+a platform signing identity, crates and npm packages are not yet registry-published, independent
+review and CODEOWNERS enforcement require additional real maintainers, and the genuine medium
+Tauri/GTK `glib 0.18` advisory remains open and tracked in
+[issue #4](https://github.com/tang-vu/veyra/issues/4) rather than being dismissed.
