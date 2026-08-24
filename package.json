@@ -32,6 +32,7 @@
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
     "oss:check": "node ./scripts/check-oss.mjs",
+    "oss:host-check": "node ./scripts/check-github.mjs",
     "package:check": "node ./scripts/check-packages.mjs",
     "eval": "node ./evals/run.mjs",
     "desktop:dev": "pnpm --filter @veyra/desktop tauri dev",

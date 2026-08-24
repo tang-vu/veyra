@@ -13,7 +13,10 @@ this repository; when these notes are shorter, `AGENTS.md` still applies.
   the corresponding contract changes.
 - Review every dependency for purpose, maintenance, license, advisories, and transitive impact. Pin
   GitHub Actions to full commit SHAs with version comments.
-- Run `corepack pnpm oss:check` and all relevant gates before claiming completion.
+- Keep required checks unconditional on matching pull requests and preserve draft-first immutable
+  releases, protected `main`/`v*` refs, and the host Actions allowlist.
+- Run `corepack pnpm oss:check` and all relevant gates before claiming completion. When authenticated
+  read access exists and hosted policy changed, also run `corepack pnpm oss:host-check`.
 - Never include secrets, private data, databases, build output, browser traces, or package archives.
 - Do not claim sandboxing, tamper-proof evidence, or production readiness beyond the threat model.
 - Never push, publish, tag, deploy, modify remote settings, or invent maintainer identities without

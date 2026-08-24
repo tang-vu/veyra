@@ -42,9 +42,11 @@ git push origin vX.Y.Z
 ```
 
 The tag workflow builds locked Linux and Windows binaries plus the unsigned Windows desktop
-installer. It verifies checksums, creates GitHub/Sigstore build-provenance attestations, and then
-creates the GitHub Release with archives and checksum files. Package-registry publication remains a
-separate, explicit maintainer action until trusted publishing is configured.
+installer. It verifies checksums, creates GitHub/Sigstore build-provenance attestations, creates a
+draft GitHub Release, attaches every archive and checksum, and only then publishes the immutable
+release. A failed draft must be inspected before an authorized maintainer removes or replaces it;
+the workflow never edits a published release. Package-registry publication remains a separate,
+explicit maintainer action until trusted publishing is configured.
 
 The attestation step stays inside each build job, immediately after packaging, as required by
 [GitHub's provenance guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations).

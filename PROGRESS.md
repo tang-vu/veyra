@@ -268,12 +268,28 @@ receipt, passed one verification, checked 39 audit events, rolled back, and remo
 file. The five workflow files also passed actionlint 1.7.12 after the downloaded checker itself was
 verified with GitHub artifact attestation.
 
-A read-only audit of the current GitHub host found the repository public with Apache-2.0 recognized,
-Issues enabled, secret scanning and push protection enabled, and the default workflow token set to
-read-only. Host configuration is not yet complete: the description and topics are empty, private
-vulnerability reporting and Dependabot security updates are disabled, no branch/tag ruleset exists,
-no project-owned private contact is documented, and Actions currently allows all actions without a
-host-enforced SHA-pin rule. The new issue forms, CodeQL, Scorecard, dependency-review, and provenance
-workflows also cannot be observed remotely until this local commit is pushed. Platform code signing
-and an attested multi-ecosystem SBOM remain roadmap work; no remote setting, tag, release, or registry
-package was changed in this task.
+After explicit maintainer authorization, the OSS baseline was pushed to `tang-vu/veyra`. The remote
+Linux full gate, Windows MSVC gate, CodeQL analysis, and OpenSSF Scorecard workflow all completed
+successfully on commit `33273fb`. The public repository now has its canonical description and five
+focused topics, a 100% GitHub community-health profile, private vulnerability reporting, Dependabot
+alerts and active security updates, secret scanning with push protection, read-only default workflow
+tokens, and a selected-actions policy that host-enforces full commit SHA references. GitHub-owned
+Actions plus the pinned pnpm and OpenSSF Scorecard Actions are the only allowed sources.
+
+Active repository rulesets now require pull requests, resolved conversations, linear history, and
+the Linux, Windows, dependency-review, and CodeQL checks on `main`; force pushes and deletion are
+blocked with no standing administrator bypass. Approval count remains zero while the repository has
+only one direct maintainer. A separate `v*` tag ruleset restricts creation, update, force-update, and
+deletion to the repository owner. Merge commits are disabled, merged branches are deleted, and future
+GitHub Releases are immutable. Release automation now creates a draft, attaches and verifies all
+assets, and only then publishes it.
+
+The new read-only `corepack pnpm oss:host-check` first failed on all missing protections, then passed
+69 assertions after the host configuration was applied. The API-visible maintainer audit found one
+direct administrator and no deploy keys, webhooks, environments, Dependabot alerts, or secret alerts.
+The refreshed Scorecard SARIF reduced the posture findings to one deliberate branch-protection
+diagnostic: independent approval, CODEOWNERS review, and last-push approval cannot be satisfied by a
+sole maintainer. Remaining human/roadmap work is explicit: no transferable project-private conduct
+contact or signing identity exists, signed release tags are therefore not required yet,
+package/recovery ownership needs periodic manual review, and platform code signing plus an attested
+multi-ecosystem SBOM remain future work. No tag, release, or registry package was created.

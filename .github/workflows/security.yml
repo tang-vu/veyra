@@ -4,14 +4,6 @@ on:
   schedule:
     - cron: "31 4 * * 1"
   pull_request:
-    paths:
-      - Cargo.lock
-      - Cargo.toml
-      - "**/Cargo.toml"
-      - package.json
-      - pnpm-lock.yaml
-      - deny.toml
-      - .github/workflows/security.yml
   workflow_dispatch:
 
 permissions:

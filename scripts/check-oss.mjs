@@ -88,6 +88,7 @@ const requiredFiles = [
   "package.json",
   "pnpm-lock.yaml",
   "rust-toolchain.toml",
+  "scripts/check-github.mjs",
   "scripts/check-packages.mjs",
 ];
 
@@ -135,6 +136,11 @@ checkDiscoveryMetadata(rootManifest, "package.json");
 check(
   rootManifest.scripts?.["oss:check"] === "node ./scripts/check-oss.mjs",
   "package.json must expose the deterministic oss:check script",
+);
+check(
+  rootManifest.scripts?.["oss:host-check"] ===
+    "node ./scripts/check-github.mjs",
+  "package.json must expose the read-only oss:host-check script",
 );
 check(
   rootManifest.scripts?.["package:check"] ===
@@ -362,6 +368,42 @@ for (const file of workflowFiles) {
     `.github/workflows/${file} must disable persisted credentials on every checkout`,
   );
 }
+
+const securityWorkflow = readText(".github/workflows/security.yml");
+check(
+  !/^\s*pull_request:\s*\n\s+(?:paths|paths-ignore):/m.test(securityWorkflow),
+  "dependency security must report a result on every pull request so it can remain a required check",
+);
+check(
+  securityWorkflow.includes("name: Review dependency changes"),
+  "dependency security must retain the stable required-check name",
+);
+
+const ciWorkflow = readText(".github/workflows/ci.yml");
+check(
+  /^\s*push:\s*\n\s+branches:\s*\n\s+- main\s*$/m.test(ciWorkflow),
+  "CI push runs must target main; pull_request covers contributor branches without duplicate builds",
+);
+
+const releaseWorkflow = readText(".github/workflows/release.yml");
+const draftReleaseIndex = releaseWorkflow.indexOf("gh release create");
+const publishReleaseIndex = releaseWorkflow.indexOf(
+  'gh release edit "$GITHUB_REF_NAME" --draft=false',
+);
+check(
+  draftReleaseIndex >= 0 &&
+    releaseWorkflow
+      .slice(
+        draftReleaseIndex,
+        releaseWorkflow.indexOf("\n", draftReleaseIndex),
+      )
+      .includes("--draft"),
+  "release automation must attach every asset to a draft before immutable publication",
+);
+check(
+  publishReleaseIndex > draftReleaseIndex,
+  "release automation must publish only after the draft and its assets exist",
+);
 
 if (failures.length > 0) {
   console.error(`OSS gate failed with ${failures.length} problem(s):`);
