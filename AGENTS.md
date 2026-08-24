@@ -112,6 +112,10 @@ client-boundary changes require a negative/adversarial regression, not only a su
   dependency review gate by hiding a dependency or weakening policy without documented review.
 - Every external GitHub Action must use an immutable 40-character commit SHA and a nearby release
   comment. Workflow permissions are read-only by default and elevated only on the smallest job.
+- Security-boundary parsing and containment changes must update the relevant `fuzz/` target. Keep
+  `cargo-fuzz`, its nightly toolchain, harness dependencies, input limits, and execution time bounded
+  and pinned; never weaken a discovered invariant or commit corpora/crash artifacts to make fuzzing
+  pass.
 - Do not add generated binaries, vendored archives, package tarballs, local databases, browser traces,
   test results, or release artifacts to Git.
 
@@ -126,9 +130,10 @@ client-boundary changes require a negative/adversarial regression, not only a su
 - GitHub Releases are immutable. Release automation must create a draft, attach and verify every
   asset, and publish only after the draft is complete. Never replace an asset or move a published
   release tag.
-- Repository rulesets protect `main` and `v*` tags. Do not rename required check contexts or weaken
-  pull-request, linear-history, force-push, deletion, tag, or conversation-resolution rules without
-  documenting the migration and verifying the resulting host state.
+- Repository rulesets protect `main` and `v*` tags. Do not rename the required Linux, Windows,
+  dependency-review, CodeQL, or security-boundary fuzz check contexts, or weaken pull-request,
+  linear-history, force-push, deletion, tag, or conversation-resolution rules without documenting
+  the migration and verifying the resulting host state.
 - Repository files cannot prove hosted settings. With authenticated read access, run
   `corepack pnpm oss:host-check` after changing workflows, release policy, or community/security
   settings. A host gate failure is evidence of drift, not a reason to weaken the local contract.

@@ -64,7 +64,9 @@ Changelog conventions.
 - Dependency review rejects newly introduced high-severity advisories, CodeQL scans JavaScript and
   TypeScript with extended security queries, OpenSSF Scorecard publishes supply-chain findings, and
   every third-party Action is immutable-SHA pinned. Tagged release jobs verify checksums, attest
-  binary provenance at the actual build boundary, and create or update a GitHub Release with
-  explicit least-privilege permissions.
+  binary provenance at the actual build boundary, and assemble a draft before publishing a new
+  immutable GitHub Release with explicit least-privilege permissions.
+- Pinned `cargo-fuzz`/libFuzzer harnesses continuously exercise canonical protocol handling and
+  component-aware resource containment on pull requests, `main`, and a longer weekly schedule.
 
 [Unreleased]: https://github.com/tang-vu/veyra/commits/main

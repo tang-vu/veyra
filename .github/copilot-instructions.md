@@ -8,7 +8,8 @@ this repository; when these notes are shorter, `AGENTS.md` still applies.
   boundaries.
 - Deny authority by default and never weaken security or recovery invariants to satisfy a test.
 - Add adversarial coverage for authorization, persistence, adapter, filesystem, and client-boundary
-  changes.
+  changes. Update the relevant pinned `cargo-fuzz` target for protocol parsing or resource-scope
+  containment changes; never commit fuzz corpora or crash artifacts.
 - Update public docs, schemas, fixtures, SDK types, changelog, threat model, evals, and progress when
   the corresponding contract changes.
 - Review every dependency for purpose, maintenance, license, advisories, and transitive impact. Pin

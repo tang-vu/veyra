@@ -1,0 +1,33 @@
+[package]
+name = "veyra-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "=1.4.2", features = ["derive"] }
+libfuzzer-sys = "=0.4.13"
+serde_json = "=1.0.151"
+veyra-policy = { path = "../crates/veyra-policy" }
+veyra-protocol = { path = "../crates/veyra-protocol" }
+
+[[bin]]
+name = "canonical_protocol"
+path = "fuzz_targets/canonical_protocol.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resource_scope"
+path = "fuzz_targets/resource_scope.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

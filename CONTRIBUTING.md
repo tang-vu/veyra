@@ -57,6 +57,14 @@ For package or release changes, inspect `cargo package --list` and `npm pack --d
 described in [`RELEASING.md`](RELEASING.md). Public archives must carry their README and license;
 registry publication, tags, GitHub Releases, and repository settings remain maintainer-only actions.
 
+## Fuzzing security boundaries
+
+The isolated [`fuzz/`](fuzz/) workspace contains libFuzzer targets for canonical protocol handling
+and resource-scope containment. CI runs bounded smoke sessions on every pull request and `main`, plus
+longer weekly sessions. Use the exact pinned nightly and `cargo-fuzz` versions documented in
+[`fuzz/README.md`](fuzz/README.md); do not commit local corpora, coverage output, or crash artifacts.
+Treat a crash that may cross a trust boundary as a private vulnerability report.
+
 ## Design proposals
 
 Behavior that changes the trust model, protocol compatibility, persistence format, or adapter
