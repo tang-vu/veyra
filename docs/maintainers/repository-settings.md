@@ -55,6 +55,9 @@ follow-up verification.
       the components share runtime state and partial upgrades fail closed.
 - [x] Enforce immutable future GitHub Releases and keep release automation draft-first so every asset
       is attached before publication.
+- [x] Revalidate the latest public Release after publication and weekly from clean GitHub-hosted
+      Linux and Windows runners; preserve exact signer, manifest, checksum, binary-SBOM, and
+      authenticated-daemon checks.
 - [x] Review CodeQL and Scorecard SARIF findings in code scanning. Treat the Scorecard result as
       diagnostic evidence, not a badge-driven reason to weaken project policy.
 - [ ] Review inactive collaborators, deploy keys, webhooks, environments, package owners, and
@@ -74,7 +77,9 @@ add ceremonial files merely to raise the score. Package ownership and recovery a
 a manual quarterly review.
 
 `CODEOWNERS`, sponsorship, package-registry publication, and signing identities require real named
-owners or accounts. Do not invent them in source control merely to satisfy a checklist.
+owners or accounts. The credential-free package rehearsal and activation prerequisites live in
+[the package publication guide](package-publishing.md); do not invent ownership or turn rehearsal
+into a registry write merely to satisfy a checklist.
 
 Authoritative references: GitHub's guides for
 [community health files](https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/creating-a-default-community-health-file),

@@ -125,6 +125,12 @@ client-boundary changes require a negative/adversarial regression, not only a su
   pass.
 - Do not add generated binaries, vendored archives, package tarballs, local databases, browser traces,
   test results, or release artifacts to Git.
+- Treat `.github/workflows/publish-packages.yml` as a credential-free rehearsal until real registry
+  owners have bootstrap-published every package and configured the exact workflow as a trusted
+  publisher. Do not add `id-token: write`, an authentication Action, or any registry write without
+  explicit maintainer authorization and the prerequisites in
+  `docs/maintainers/package-publishing.md`. Prefer short-lived OIDC credentials over repository
+  tokens; publish multi-crate workspaces dependency-first and wait for registry visibility.
 
 ## Hosted OSS invariants
 
@@ -137,6 +143,18 @@ client-boundary changes require a negative/adversarial regression, not only a su
 - GitHub Releases are immutable. Release automation must create a draft, attach and verify every
   asset, and publish only after the draft is complete. Never replace an asset or move a published
   release tag.
+- Preserve binary-scoped SBOMs as a complete five-document contract: CLI and daemon on Linux and
+  Windows plus the Windows desktop payload. Build them with the pinned auditable Cargo path, require
+  the expected root PURL and exact executable subject digest, checksum and attest each document, and
+  keep the separate repository SBOM. Extract the desktop subject from the completed NSIS installer in
+  both release and consumer gates; never describe its Rust inventory as coverage of the NSIS
+  bootstrapper or unreported native libraries.
+- Preserve `.github/workflows/release-consumer.yml` as a public-artifact test, not a source-build
+  substitute. It must resolve the annotated tag, require an immutable public Release, verify the
+  manifest/checksums/exact signer and binary-SBOM subjects, then execute downloaded Linux and Windows
+  archives with unauthenticated-denial and authenticated-health probes. Only immutable `v0.1.0` may
+  retain the explicitly validated legacy evidence contract; never create another legacy exception or
+  rewrite historical assets.
 - Recover an unpublished tagged release only through the documented workflow on protected `main`.
   Require an existing annotated version tag resolving to every exact build checkout, rebuild and
   re-attest all outputs, preserve draft-first publication, and never delete, recreate, or move the

@@ -81,7 +81,10 @@ gh attestation verify ./veyra-v0.1.0.release-manifest.json --repo tang-vu/veyra
 
 See the [release notes](docs/releases/v0.1.0.md) for artifact scope, Windows verification, and known
 security limitations. The installer is not platform-signed; checksums and provenance do not replace
-the trust decision described in the threat model.
+the trust decision described in the threat model. The protected-main
+[release evidence guide](docs/maintainers/release-evidence.md) documents the automated clean-consumer
+gate and the binary-scoped SBOM contract used by subsequent releases without rewriting immutable
+v0.1.0 assets.
 
 ### Run from source
 

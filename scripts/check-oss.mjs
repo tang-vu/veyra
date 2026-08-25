@@ -69,7 +69,9 @@ const requiredFiles = [
   ".github/workflows/ci.yml",
   ".github/workflows/codeql.yml",
   ".github/workflows/fuzz.yml",
+  ".github/workflows/publish-packages.yml",
   ".github/workflows/release.yml",
+  ".github/workflows/release-consumer.yml",
   ".github/workflows/scorecard.yml",
   ".github/workflows/security.yml",
   "AGENTS.md",
@@ -88,6 +90,8 @@ const requiredFiles = [
   ".syft.yaml",
   "Cargo.lock",
   "deny.toml",
+  "docs/maintainers/package-publishing.md",
+  "docs/maintainers/release-evidence.md",
   "docs/maintainers/repository-settings.md",
   "fuzz/.gitignore",
   "fuzz/Cargo.lock",
@@ -99,10 +103,14 @@ const requiredFiles = [
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
   "rust-toolchain.toml",
+  "scripts/check-artifact-sbom.mjs",
   "scripts/check-github.mjs",
+  "scripts/check-package-publication.mjs",
   "scripts/check-packages.mjs",
   "scripts/check-release.mjs",
   "scripts/create-release-manifest.mjs",
+  "scripts/tests/release-assets.test.mjs",
+  "scripts/verify-release-assets.mjs",
 ];
 
 for (const path of requiredFiles) {
@@ -125,6 +133,10 @@ for (const marker of [
   "pnpm release:check",
   "`cargo-fuzz`",
   "Never push, publish, deploy",
+  "credential-free rehearsal",
+  "complete five-document contract",
+  "public-artifact test",
+  "Only immutable `v0.1.0`",
 ]) {
   check(
     agentInstructions.includes(marker),
@@ -179,13 +191,27 @@ check(
 );
 check(
   rootManifest.scripts?.["package:check"] ===
-    "node ./scripts/check-packages.mjs",
+    "node ./scripts/check-packages.mjs && node ./scripts/check-package-publication.mjs",
   "package.json must expose the deterministic package:check script",
 );
 check(
   rootManifest.scripts?.["release:check"] ===
     "node ./scripts/check-release.mjs",
   "package.json must expose the deterministic release:check script",
+);
+check(
+  rootManifest.scripts?.["release:verify-assets"] ===
+    "node ./scripts/verify-release-assets.mjs",
+  "package.json must expose the downloaded release verifier",
+);
+check(
+  rootManifest.scripts?.["test:release-assets"] ===
+    "node --test ./scripts/tests/*.test.mjs",
+  "package.json must expose deterministic release-evidence tests",
+);
+check(
+  rootManifest.scripts?.test === "pnpm -r test && pnpm test:release-assets",
+  "the default test gate must execute release-evidence regressions",
 );
 
 const rootLicense = normalized(readText("LICENSE"));
@@ -572,6 +598,18 @@ for (const marker of [
   'node scripts/check-release.mjs "$VEYRA_RELEASE_TAG" --require-tag',
   "ref: ${{ env.VEYRA_RELEASE_REF }}",
   "name: Release dependency SBOM",
+  "cargo install cargo-auditable --version 0.7.5 --locked",
+  "cargo auditable build --locked --release -p veyra-cli -p veyra-server",
+  "name: Prepare auditable Tauri Cargo runner",
+  'tauri build --runner "$env:VEYRA_TAURI_CARGO_RUNNER"',
+  "name: Collect bundle, checksum, and exact installed payload",
+  "Get-Command 7z.exe -CommandType Application",
+  "name: Generate CLI binary SPDX SBOM",
+  "name: Generate daemon binary SPDX SBOM",
+  "name: Generate desktop payload SPDX SBOM",
+  "scripts/check-artifact-sbom.mjs",
+  "name: Attest core binary SBOMs",
+  "name: Attest desktop payload SBOM",
   "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0",
   "syft-version: v1.42.3",
   "config: ${{ inputs.release_tag != '' && '.release-control/.syft.yaml' || '.syft.yaml' }}",
@@ -586,6 +624,8 @@ for (const marker of [
   "name: Create release manifest",
   'VEYRA_RELEASE_SOURCE="$GITHUB_WORKSPACE"',
   'node "$manifest_script" "$VEYRA_RELEASE_TAG" dist',
+  "name: Verify assembled release before publication",
+  'node "$verifier" "$VEYRA_RELEASE_TAG" dist "$GITHUB_REPOSITORY" "$source_commit"',
   "name: Attest release manifest",
   'release_notes="$(cat dist/RELEASE_NOTES.md)"',
   '--notes "$release_notes"',
@@ -595,6 +635,64 @@ for (const marker of [
     `release workflow is missing versioned release evidence: ${marker}`,
   );
 }
+const consumerWorkflow = readText(".github/workflows/release-consumer.yml");
+for (const marker of [
+  "name: Release consumer verification",
+  "types:\n      - published",
+  'cron: "17 6 * * 1"',
+  "name: Resolve immutable release",
+  ".immutable == true",
+  "scripts/verify-release-assets.mjs",
+  "--signer-workflow",
+  "--deny-self-hosted-runners",
+  "name: Bind binary SBOM subjects to shipped payloads",
+  '7z x "$desktop_installer"',
+  "veyra-desktop-windows-x86_64.spdx.json",
+  "unauthenticated health request unexpectedly succeeded",
+  "Authorization: Bearer",
+]) {
+  check(
+    consumerWorkflow.includes(marker),
+    `release consumer workflow is missing fail-closed behavior: ${marker}`,
+  );
+}
+const publicationWorkflow = readText(".github/workflows/publish-packages.yml");
+for (const marker of [
+  "name: Package publication rehearsal",
+  "workflow_dispatch:",
+  "package rehearsal must be dispatched from protected main",
+  ".immutable == true",
+  "scripts/check-package-publication.mjs",
+  "cargo publish --dry-run",
+  "npm publish --dry-run",
+  "without id-token permission, credentials, or registry writes",
+]) {
+  check(
+    publicationWorkflow.includes(marker),
+    `package rehearsal is missing read-only behavior: ${marker}`,
+  );
+}
+check(
+  !publicationWorkflow.includes("id-token:") &&
+    !publicationWorkflow.includes("CARGO_REGISTRY_TOKEN") &&
+    !publicationWorkflow.includes("NODE_AUTH_TOKEN") &&
+    !publicationWorkflow.includes("NPM_TOKEN"),
+  "package rehearsal must not request OIDC or registry credentials",
+);
+const registryPublishCommands = publicationWorkflow.match(
+  /(?:cargo|npm) publish[^\n]*/g,
+);
+check(
+  (registryPublishCommands ?? []).length === 3 &&
+    registryPublishCommands.every((command) => command.includes("--dry-run")) &&
+    !/^\s*[A-Za-z-]+:\s+write\s*$/m.test(publicationWorkflow),
+  "package rehearsal may contain only the three reviewed dry-run publish commands and no write permission",
+);
+check(
+  !/^\s*push:\s*$/m.test(publicationWorkflow) &&
+    !/^\s*release:\s*$/m.test(publicationWorkflow),
+  "package rehearsal must stay manual until trusted publishing is activated",
+);
 check(
   !releaseWorkflow.includes("dependency-graph/sbom"),
   "release SBOM must not depend on the default-branch-only dependency graph export",
@@ -618,6 +716,16 @@ for (const marker of ["Syft 1.42.3", "release-manifest.json"]) {
   check(
     currentReleaseNotes.includes(marker),
     `current release notes must describe generated evidence: ${marker}`,
+  );
+}
+const releaseContract = readText("scripts/check-release.mjs");
+for (const marker of [
+  "hasBinaryScopedSboms",
+  'markers.push("cargo-auditable", "binary-scoped", "NSIS bootstrapper")',
+]) {
+  check(
+    releaseContract.includes(marker),
+    `release contract must preserve future binary-SBOM disclosure: ${marker}`,
   );
 }
 const draftReleaseIndex = releaseWorkflow.indexOf("gh release create");

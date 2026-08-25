@@ -24,6 +24,12 @@ this repository; when these notes are shorter, `AGENTS.md` still applies.
 - Keep release tags, Rust/npm/Tauri versions, dated changelog entries, and curated versioned release
   notes synchronized. Preserve tag-time contract validation, checksum/provenance instructions,
   unsigned-artifact disclosure, and honest SBOM scope.
+- Preserve the complete binary-scoped SBOM set and clean-consumer release workflow, including exact
+  binary subject digests, extraction of the installed desktop payload, and the explicit
+  NSIS/native-component limitation.
+- Keep package publication rehearsal credential-free. Activate registry writes or OIDC permissions
+  only after real owners bootstrap the packages, configure the exact trusted publisher, and
+  explicitly authorize the host and workflow changes documented in `docs/maintainers/package-publishing.md`.
 - Run `corepack pnpm oss:check` and all relevant gates before claiming completion. When authenticated
   read access exists and hosted policy changed, also run `corepack pnpm oss:host-check`.
 - Never include secrets, private data, databases, build output, browser traces, or package archives.
