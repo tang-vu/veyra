@@ -663,6 +663,7 @@ for (const marker of [
   "package rehearsal must be dispatched from protected main",
   ".immutable == true",
   "scripts/check-package-publication.mjs",
+  "--allow-v0.1.0-legacy-links",
   "cargo publish --dry-run",
   "npm publish --dry-run",
   "without id-token permission, credentials, or registry writes",
@@ -722,6 +723,8 @@ const releaseContract = readText("scripts/check-release.mjs");
 for (const marker of [
   "hasBinaryScopedSboms",
   'markers.push("cargo-auditable", "binary-scoped", "NSIS bootstrapper")',
+  'tag === "v0.1.0"',
+  '"--allow-v0.1.0-legacy-links is valid only for v0.1.0 recovery from protected main"',
 ]) {
   check(
     releaseContract.includes(marker),

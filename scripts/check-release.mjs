@@ -29,17 +29,29 @@ function readJson(path) {
 
 const requireTag = process.argv.includes("--require-tag");
 const allowRecovery = process.argv.includes("--allow-recovery");
+const allowV010LegacyLinks = process.argv.includes(
+  "--allow-v0.1.0-legacy-links",
+);
 const suppliedTag = process.argv
   .slice(2)
   .find(
     (argument) =>
-      argument !== "--require-tag" && argument !== "--allow-recovery",
+      argument !== "--require-tag" &&
+      argument !== "--allow-recovery" &&
+      argument !== "--allow-v0.1.0-legacy-links",
   );
 const rootManifest = readJson("package.json");
 const version = rootManifest.version;
 const tag = suppliedTag ?? `v${version}`;
 
 check(!allowRecovery || requireTag, "--allow-recovery requires --require-tag");
+
+const usesV010LegacyLinks =
+  allowV010LegacyLinks && allowRecovery && requireTag && tag === "v0.1.0";
+check(
+  !allowV010LegacyLinks || usesV010LegacyLinks,
+  "--allow-v0.1.0-legacy-links is valid only for v0.1.0 recovery from protected main",
+);
 
 check(
   /^v\d+\.\d+\.\d+$/.test(tag),
@@ -114,20 +126,39 @@ if (existsSync(repositoryPath(releaseNotesPath))) {
     `${releaseNotesPath} must contain reviewable documentation links`,
   );
   check(
-    inlineLinks.every((link) => link.startsWith("https://")),
-    `${releaseNotesPath} must use absolute HTTPS Markdown links because GitHub Release notes do not preserve file-relative context`,
+    inlineLinks.every(
+      (link) =>
+        link.startsWith("https://") ||
+        (usesV010LegacyLinks &&
+          [
+            "../security/threat-model.md",
+            "../../CHANGELOG.md",
+            "../../ROADMAP.md",
+          ].includes(link)),
+    ),
+    `${releaseNotesPath} must use absolute HTTPS Markdown links except for the three documented v0.1.0 legacy links`,
   );
-  for (const [label, link] of [
-    [
-      "threat model",
-      `https://github.com/tang-vu/veyra/blob/${tag}/docs/security/threat-model.md`,
-    ],
-    ["changelog", `https://github.com/tang-vu/veyra/blob/${tag}/CHANGELOG.md`],
-    ["roadmap", `https://github.com/tang-vu/veyra/blob/${tag}/ROADMAP.md`],
-  ]) {
+  const documentationLinks = usesV010LegacyLinks
+    ? [
+        ["threat model", "../security/threat-model.md"],
+        ["changelog", "../../CHANGELOG.md"],
+        ["roadmap", "../../ROADMAP.md"],
+      ]
+    : [
+        [
+          "threat model",
+          `https://github.com/tang-vu/veyra/blob/${tag}/docs/security/threat-model.md`,
+        ],
+        [
+          "changelog",
+          `https://github.com/tang-vu/veyra/blob/${tag}/CHANGELOG.md`,
+        ],
+        ["roadmap", `https://github.com/tang-vu/veyra/blob/${tag}/ROADMAP.md`],
+      ];
+  for (const [label, link] of documentationLinks) {
     check(
       releaseNotes.includes(`[${label}](${link})`),
-      `${releaseNotesPath} must use the tag-pinned ${label} link: ${link}`,
+      `${releaseNotesPath} must use the required ${label} link: ${link}`,
     );
   }
   const markers = [
