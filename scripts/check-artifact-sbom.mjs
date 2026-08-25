@@ -1,6 +1,6 @@
 import { createReadStream, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { basename, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const artifactSbomSyftVersion = "1.42.3";
@@ -17,6 +17,16 @@ function packagePurls(package_) {
   return (package_?.externalRefs ?? [])
     .filter((reference) => reference.referenceType === "purl")
     .map((reference) => reference.referenceLocator);
+}
+
+function normalizedBinaryIdentityName(name) {
+  return String(name)
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter(Boolean)
+    .at(-1)
+    ?.replace(/\.exe$/i, "")
+    .toLowerCase();
 }
 
 export async function validateArtifactSbom({
@@ -106,6 +116,18 @@ export async function validateArtifactSbom({
       package_.primaryPackagePurpose !== "FILE" &&
       !cargoPackages.includes(package_),
   );
+  const expectedBinaryIdentityNames = new Set(
+    {
+      "veyra-cli": ["veyra"],
+      "veyra-server": ["veyra-server"],
+      "veyra-desktop": ["veyra", "veyra-desktop"],
+    }[expectedRootPackage] ?? [expectedRootPackage],
+  );
+  if (binaryPath) {
+    expectedBinaryIdentityNames.add(
+      basename(binaryPath, extname(binaryPath)).toLowerCase(),
+    );
+  }
   const roots = packages.filter(
     (package_) =>
       package_.name === expectedRootPackage &&
@@ -118,18 +140,28 @@ export async function validateArtifactSbom({
   );
   check(
     binaryIdentityPackages.length <= 1 &&
-      binaryIdentityPackages.every(
-        (package_) =>
-          package_.SPDXID?.startsWith("SPDXRef-Package-binary-") &&
+      binaryIdentityPackages.every((package_) => {
+        const references = package_.externalRefs ?? [];
+        const isVersionedIdentity =
           package_.versionInfo === expectedVersion &&
-          (package_.externalRefs ?? []).some(
+          references.length > 0 &&
+          references.every(
             (reference) =>
               reference.referenceCategory === "SECURITY" &&
               reference.referenceType === "cpe23Type" &&
               reference.referenceLocator?.startsWith("cpe:2.3:a:"),
-          ),
-      ),
-    "every dependency package must use a Cargo PURL; at most one version-matched PE identity package is allowed",
+          );
+        const isUnversionedPeIdentity =
+          package_.versionInfo === "UNKNOWN" && references.length === 0;
+        return (
+          package_.SPDXID?.startsWith("SPDXRef-Package-binary-") &&
+          expectedBinaryIdentityNames.has(
+            normalizedBinaryIdentityName(package_.name),
+          ) &&
+          (isVersionedIdentity || isUnversionedPeIdentity)
+        );
+      }),
+    "every dependency package must use a Cargo PURL; at most one name-bound PE identity package with reviewed metadata is allowed",
   );
 
   check(

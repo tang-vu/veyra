@@ -315,6 +315,69 @@ test("rejects an unclassified non-Cargo package in a binary SBOM", async () => {
   );
 });
 
+test("accepts Syft's name-bound unversioned PE identity", async () => {
+  const document = artifactSpdx("veyra-cli-windows-x86_64", "veyra-cli");
+  const fileId = document.packages.find(
+    ({ primaryPackagePurpose }) => primaryPackagePurpose === "FILE",
+  ).SPDXID;
+  const binaryIdentityId = "SPDXRef-Package-binary--veyra-fixture";
+  document.packages.splice(1, 0, {
+    name: "\\veyra",
+    SPDXID: binaryIdentityId,
+    versionInfo: "UNKNOWN",
+    supplier: "NOASSERTION",
+    downloadLocation: "NOASSERTION",
+    filesAnalyzed: false,
+    licenseConcluded: "NOASSERTION",
+    licenseDeclared: "NOASSERTION",
+    copyrightText: "NOASSERTION",
+    externalRefs: [],
+  });
+  document.relationships.push({
+    spdxElementId: fileId,
+    relationshipType: "CONTAINS",
+    relatedSpdxElement: binaryIdentityId,
+  });
+
+  const result = await validateArtifactSbom({
+    document,
+    expectedSourceName: "veyra-cli-windows-x86_64",
+    expectedRootPackage: "veyra-cli",
+    expectedVersion: version,
+  });
+  assert.equal(result.packageCount, 2);
+});
+
+test("rejects an unversioned PE identity for another binary", async () => {
+  const document = artifactSpdx("veyra-cli-windows-x86_64", "veyra-cli");
+  const fileId = document.packages.find(
+    ({ primaryPackagePurpose }) => primaryPackagePurpose === "FILE",
+  ).SPDXID;
+  const binaryIdentityId = "SPDXRef-Package-binary-mystery-fixture";
+  document.packages.splice(1, 0, {
+    name: "mystery",
+    SPDXID: binaryIdentityId,
+    versionInfo: "UNKNOWN",
+    externalRefs: [],
+  });
+  document.relationships.push({
+    spdxElementId: fileId,
+    relationshipType: "CONTAINS",
+    relatedSpdxElement: binaryIdentityId,
+  });
+
+  await assert.rejects(
+    () =>
+      validateArtifactSbom({
+        document,
+        expectedSourceName: "veyra-cli-windows-x86_64",
+        expectedRootPackage: "veyra-cli",
+        expectedVersion: version,
+      }),
+    /at most one name-bound PE identity package/,
+  );
+});
+
 test("rejects a binary SBOM whose expected root PURL is absent", async () => {
   const document = artifactSpdx("veyra-cli-linux-x86_64", "veyra-cli");
   document.packages.find(

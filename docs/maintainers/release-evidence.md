@@ -33,6 +33,11 @@ expected root crate, Cargo PURLs, dependency relationships, stable artifact iden
 both CLI/daemon archives and the NSIS installer and compares all five shipped payloads with those
 subject digests.
 
+On PE files, Syft may also emit one binary-identity package from the executable's version-resource
+cataloger. The validator accepts it only when its normalized name is bound to the expected Veyra
+binary and its metadata is either the expected version plus CPE references or Syft's explicit
+`UNKNOWN` value with no references. Other non-Cargo packages remain a hard failure.
+
 The desktop build passes Tauri an explicit auditable Cargo runner. After Tauri creates the installer,
 the release job extracts its exact `veyra-desktop.exe` payload and scans those bytes; the public
 consumer job independently repeats that extraction before checking the subject digest. The desktop
