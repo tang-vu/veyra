@@ -33,6 +33,11 @@ expected root crate, Cargo PURLs, dependency relationships, stable artifact iden
 both CLI/daemon archives and the NSIS installer and compares all five shipped payloads with those
 subject digests.
 
+On PE files, Syft may also emit one binary-identity package from the executable's version-resource
+cataloger. The validator accepts it only when its normalized name is bound to the expected Veyra
+binary and its metadata is either the expected version plus CPE references or Syft's explicit
+`UNKNOWN` value with no references. Other non-Cargo packages remain a hard failure.
+
 The desktop build passes Tauri an explicit auditable Cargo runner. After Tauri creates the installer,
 the release job extracts its exact `veyra-desktop.exe` payload and scans those bytes; the public
 consumer job independently repeats that extraction before checking the subject digest. The desktop
@@ -63,3 +68,7 @@ GitHub API, requires a public non-prerelease immutable Release, verifies the exa
 signer while denying self-hosted build attestations, binds archive and installed desktop payloads to
 binary SBOM subjects, and runs version, demo, unauthenticated-denial, and authenticated-health probes
 from freshly downloaded Linux and Windows archives.
+
+An unpublishing build-only dispatch uses a run-scoped `build-<run-id>` evidence identifier rather
+than a branch name. This keeps SBOM paths stable and path-safe even when the source branch contains
+slashes, while real tag and protected recovery runs retain their exact `vX.Y.Z` asset names.

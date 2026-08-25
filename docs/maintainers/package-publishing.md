@@ -17,6 +17,11 @@ Run it from protected `main` with:
 gh workflow run publish-packages.yml --repo tang-vu/veyra --ref main -f release_tag=vX.Y.Z
 ```
 
+The immutable `v0.1.0` release predates the absolute, tag-pinned links now required in copied GitHub
+Release notes. Its rehearsal uses a named compatibility switch that accepts only the three known
+relative documentation links, only for `v0.1.0`, and only during an explicit protected-main
+recovery run. The switch cannot relax the contract for later tags.
+
 ## Package order
 
 Cargo replaces local paths with registry dependencies when packaging. Internal crates must therefore

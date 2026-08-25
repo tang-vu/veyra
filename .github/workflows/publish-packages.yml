@@ -73,7 +73,14 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           VEYRA_RELEASE_SOURCE: ${{ github.workspace }}
-        run: node .publication-control/scripts/check-release.mjs "$RELEASE_TAG" --require-tag --allow-recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_args=("$RELEASE_TAG" --require-tag --allow-recovery)
+          if [[ "$RELEASE_TAG" == "v0.1.0" ]]; then
+            release_args+=(--allow-v0.1.0-legacy-links)
+          fi
+          node .publication-control/scripts/check-release.mjs "${release_args[@]}"
 
       - name: Build and inspect every package archive
         env:
