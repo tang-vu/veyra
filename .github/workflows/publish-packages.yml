@@ -1,0 +1,96 @@
+name: Package publication rehearsal
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing public immutable vX.Y.Z release to rehearse
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    name: Rehearse registry packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Validate protected-main request
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "package rehearsal must be dispatched from protected main" >&2
+            exit 1
+          }
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "release_tag must be vX.Y.Z" >&2
+            exit 1
+          }
+
+      - name: Check out package source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          persist-credentials: false
+
+      - name: Check out protected publication controls
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .publication-control
+          persist-credentials: false
+
+      - name: Require a public immutable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            --jq 'select(.draft == false and .prerelease == false and .immutable == true) | .tag_name' \
+            | grep -Fx "$RELEASE_TAG"
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.20.0
+
+      - name: Install pinned Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Verify tag and release contracts
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          VEYRA_RELEASE_SOURCE: ${{ github.workspace }}
+        run: node .publication-control/scripts/check-release.mjs "$RELEASE_TAG" --require-tag --allow-recovery
+
+      - name: Build and inspect every package archive
+        env:
+          VEYRA_PACKAGE_SOURCE: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm package:check
+          node .publication-control/scripts/check-package-publication.mjs
+
+      - name: Exercise registry dry-run boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo publish --dry-run --package veyra-protocol --locked --allow-dirty
+          (cd packages/protocol-schema && npm publish --dry-run --json)
+          (cd packages/sdk-typescript && npm publish --dry-run --json)
+          echo "Rehearsal completed without id-token permission, credentials, or registry writes."

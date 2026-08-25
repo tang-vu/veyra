@@ -505,3 +505,43 @@ a platform signing identity, crates and npm packages are not yet registry-publis
 review and CODEOWNERS enforcement require additional real maintainers, and the genuine medium
 Tauri/GTK `glib 0.18` advisory remains open and tracked in
 [issue #4](https://github.com/tang-vu/veyra/issues/4) rather than being dismissed.
+
+## 2026-08-25 - release consumers, binary SBOMs, and registry rehearsal
+
+Release evidence now reaches the executable boundary instead of stopping at the source tree. The
+Linux and Windows CLI/daemon jobs build through pinned `cargo-auditable 0.7.5`; pinned Syft 1.42.3
+generates four binary-scoped SPDX 2.3 documents. The Windows desktop job gives Tauri an explicit
+auditable Cargo runner, creates the NSIS installer, extracts the exact `veyra-desktop.exe` shipped
+inside it, and generates the fifth document from those bytes. Each document must contain its exact
+root Cargo PURL, dependency relationships, one stable file subject, and the subject's real SHA-256;
+each is separately checksummed and attested. The repository dependency SBOM remains a distinct sixth
+inventory layer. NSIS bootstrap code, installer plug-ins, WebView, and native dependencies not
+represented by Cargo remain an explicit gap rather than implied coverage.
+
+A new release-consumer workflow runs on publication, weekly, and on manual request. It resolves the
+annotated tag through the GitHub API, requires a public immutable non-prerelease Release, rejects
+manifest or checksum drift and partial binary-SBOM rollout, verifies the exact `release.yml` signer
+on GitHub-hosted runners, extracts all five payloads and compares their subject digests, and exercises
+downloaded Linux and Windows CLI/daemon archives. The daemon smoke test proves both unauthenticated
+denial and authenticated health. The immutable v0.1.0 evidence contract remains supported without
+retroactively changing its 14 assets; a fresh download passed 144 verifier checks.
+
+Package publication is now rehearsable without credentials or writes. The gate validates seven
+public Rust manifests, two npm packages, their archive contents and provenance settings, and the
+dependency-first Rust order `veyra-protocol -> veyra-executor -> veyra-journal -> veyra-policy ->
+veyra-core -> veyra-server -> veyra-cli` before leaf Cargo and both npm dry runs. Registry API checks
+on 2026-08-25 found none of the intended names published, which is not treated as proof of ownership
+or reservation. The workflow deliberately has no registry token, OIDC permission, release trigger,
+or write path until a real owner performs the documented bootstrap publications and configures the
+exact trusted publishers.
+
+Local evidence used the installed Windows GNU Rust toolchain because this host has no MSVC linker.
+Fresh auditable binaries exposed 189 Cargo packages for the CLI, 186 for the daemon, and 311 for the
+desktop payload extracted from a locally built NSIS installer; every tested subject digest matched
+its exact binary bytes. `scripts/verify.ps1` passed 109 Rust tests, 25 JavaScript/TypeScript/release
+tests, 16 generated schemas, public Rust docs, dependency policy, seven Rust plus two npm package
+archives, 63 passing evals, one documented environment-limited eval, zero failed evals, and the
+deterministic commit/verify/rollback demo. `oss:check` passed 516 assertions, the publication plan
+passed 67 checks, the public v0.1.0 verifier passed 144 checks, and actionlint 1.7.12 accepted all
+eight workflows. Protected GitHub CI and clean hosted consumer/rehearsal runs remain required before
+this change is complete.

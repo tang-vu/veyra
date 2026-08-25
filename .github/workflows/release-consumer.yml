@@ -1,0 +1,295 @@
+name: Release consumer verification
+
+on:
+  release:
+    types:
+      - published
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Public immutable vX.Y.Z release to verify; leave empty for latest
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-consumer-${{ github.event.release.tag_name || inputs.release_tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-release:
+    name: Resolve immutable release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      source_commit: ${{ steps.release.outputs.source_commit }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Resolve release and annotated tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.release_tag || github.event.release.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$REQUESTED_TAG"
+          if [[ -z "$tag" ]]; then
+            tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "release tag must be vX.Y.Z" >&2
+            exit 1
+          }
+
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")"
+          jq -e --arg tag "$tag" '
+            .tag_name == $tag and
+            .draft == false and
+            .prerelease == false and
+            .immutable == true and
+            (.published_at | type == "string") and
+            (.assets | length >= 14)
+          ' <<<"$release" >/dev/null
+
+          tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag")"
+          [[ "$(jq -r .object.type <<<"$tag_ref")" == "tag" ]] || {
+            echo "$tag must be an annotated tag" >&2
+            exit 1
+          }
+          tag_object_sha="$(jq -r .object.sha <<<"$tag_ref")"
+          tag_object="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")"
+          [[ "$(jq -r .object.type <<<"$tag_object")" == "commit" ]] || {
+            echo "$tag annotated object must resolve directly to a commit" >&2
+            exit 1
+          }
+          source_commit="$(jq -r .object.sha <<<"$tag_object")"
+          [[ "$source_commit" =~ ^[a-f0-9]{40}$ ]]
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "source_commit=$source_commit" >> "$GITHUB_OUTPUT"
+          echo "Resolved $tag at $source_commit as a public immutable release."
+
+  verify-evidence:
+    name: Verify release evidence
+    needs: resolve-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      attestations: read
+      contents: read
+    steps:
+      - name: Check out protected verification controls
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Install pinned Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Download every public release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+        shell: bash
+        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist
+
+      - name: Verify checksums, manifest, source binding, and SBOM contracts
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.resolve-release.outputs.source_commit }}
+        run: node scripts/verify-release-assets.mjs "$RELEASE_TAG" dist "$GITHUB_REPOSITORY" "$SOURCE_COMMIT"
+
+      - name: Verify build provenance and exact signer workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          attested=(
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.exe
+            dist/*.spdx.json
+            dist/*.release-manifest.json
+          )
+          (( ${#attested[@]} >= 5 ))
+          for artifact in "${attested[@]}"; do
+            gh attestation verify "$artifact" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --deny-self-hosted-runners
+          done
+
+      - name: Bind binary SBOM subjects to shipped payloads
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cli_sbom="dist/veyra-cli-linux-x86_64.spdx.json"
+          if [[ ! -f "$cli_sbom" ]]; then
+            echo "$RELEASE_TAG predates binary-scoped SBOM publication; legacy evidence was verified."
+            exit 0
+          fi
+
+          version="${RELEASE_TAG#v}"
+          mkdir -p extracted/linux extracted/windows
+          tar -xzf dist/veyra-linux-x86_64.tar.gz -C extracted/linux
+          unzip -q dist/veyra-windows-x86_64.zip -d extracted/windows
+          command -v 7z >/dev/null
+          desktop_installer="dist/Veyra_${version}_x64-setup.exe"
+          [[ -f "$desktop_installer" ]]
+          mkdir -p extracted/desktop
+          7z x "$desktop_installer" -oextracted/desktop -y >/dev/null
+          mapfile -d '' -t desktop_payloads < <(
+            find extracted/desktop -type f -name veyra-desktop.exe -print0
+          )
+          (( ${#desktop_payloads[@]} == 1 ))
+          linux_root="extracted/linux/veyra-linux-x86_64"
+          windows_root="extracted/windows/veyra-windows-x86_64"
+          node scripts/check-artifact-sbom.mjs "$cli_sbom" veyra-cli-linux-x86_64 veyra-cli "$version" "$linux_root/veyra"
+          node scripts/check-artifact-sbom.mjs dist/veyra-server-linux-x86_64.spdx.json veyra-server-linux-x86_64 veyra-server "$version" "$linux_root/veyra-server"
+          node scripts/check-artifact-sbom.mjs dist/veyra-cli-windows-x86_64.spdx.json veyra-cli-windows-x86_64 veyra-cli "$version" "$windows_root/veyra.exe"
+          node scripts/check-artifact-sbom.mjs dist/veyra-server-windows-x86_64.spdx.json veyra-server-windows-x86_64 veyra-server "$version" "$windows_root/veyra-server.exe"
+          node scripts/check-artifact-sbom.mjs dist/veyra-desktop-windows-x86_64.spdx.json veyra-desktop-windows-x86_64 veyra-desktop "$version" "${desktop_payloads[0]}"
+
+  smoke-packages:
+    name: Clean consumer smoke (${{ matrix.name }})
+    needs:
+      - resolve-release
+      - verify-evidence
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            archive: veyra-linux-x86_64.tar.gz
+          - name: windows-x86_64
+            os: windows-latest
+            archive: veyra-windows-x86_64.zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - name: Download platform archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+        shell: bash
+        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "${{ matrix.archive }}" --dir dist
+
+      - name: Exercise Linux CLI and authenticated daemon
+        if: runner.os == 'Linux'
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          smoke_root="$RUNNER_TEMP/veyra-consumer-smoke"
+          mkdir -p "$smoke_root"
+          tar -xzf "dist/${{ matrix.archive }}" -C "$smoke_root"
+          package_root="$smoke_root/veyra-${{ matrix.name }}"
+          [[ "$("$package_root/veyra" --version)" == "veyra $version" ]]
+          "$package_root/veyra-server" --help >/dev/null
+          "$package_root/veyra" demo --json
+
+          data="$smoke_root/data"
+          workspace="$smoke_root/workspace"
+          "$package_root/veyra-server" --data-directory "$data" --workspace "$workspace" >"$smoke_root/server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
+          ready=false
+          for _ in {1..30}; do
+            if [[ -s "$data/api-token" ]]; then
+              unauthorized="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:7843/v1/health || true)"
+              if [[ "$unauthorized" == "000" ]]; then
+                sleep 1
+                continue
+              fi
+              [[ "$unauthorized" == "401" ]]
+              if curl --silent --fail -H "Authorization: Bearer $(<"$data/api-token")" http://127.0.0.1:7843/v1/health >/dev/null; then
+                ready=true
+                break
+              fi
+            fi
+            sleep 1
+          done
+          [[ "$ready" == "true" ]] || {
+            cat "$smoke_root/server.log" >&2
+            exit 1
+          }
+          kill "$server_pid"
+          wait "$server_pid" || true
+          trap - EXIT
+
+      - name: Exercise Windows CLI and authenticated daemon
+        if: runner.os == 'Windows'
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:RELEASE_TAG.Substring(1)
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "veyra-consumer-smoke"
+          Expand-Archive -LiteralPath "dist/${{ matrix.archive }}" -DestinationPath $smokeRoot
+          $packageRoot = Join-Path $smokeRoot "veyra-${{ matrix.name }}"
+          $cli = Join-Path $packageRoot "veyra.exe"
+          $server = Join-Path $packageRoot "veyra-server.exe"
+          $actualVersion = (& $cli --version).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actualVersion -ne "veyra $version") {
+            throw "unexpected packaged CLI version: $actualVersion"
+          }
+          & $server --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "packaged daemon help failed" }
+          & $cli demo --json
+          if ($LASTEXITCODE -ne 0) { throw "packaged reversible demo failed" }
+
+          $data = Join-Path $smokeRoot "data"
+          $workspace = Join-Path $smokeRoot "workspace"
+          $stdout = Join-Path $smokeRoot "server.stdout.log"
+          $stderr = Join-Path $smokeRoot "server.stderr.log"
+          $process = Start-Process -FilePath $server -ArgumentList @(
+            "--data-directory", $data, "--workspace", $workspace
+          ) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 30; $attempt += 1) {
+              if ($process.HasExited) {
+                throw "packaged daemon exited early: $(Get-Content -Raw -LiteralPath $stderr)"
+              }
+              $tokenPath = Join-Path $data "api-token"
+              if (Test-Path -LiteralPath $tokenPath) {
+                try {
+                  Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:7843/v1/health" | Out-Null
+                  throw "unauthenticated health request unexpectedly succeeded"
+                } catch {
+                  if ($null -eq $_.Exception.Response) {
+                    Start-Sleep -Seconds 1
+                    continue
+                  }
+                  if ([int]$_.Exception.Response.StatusCode -ne 401) { throw }
+                }
+                $token = (Get-Content -Raw -LiteralPath $tokenPath).Trim()
+                Invoke-RestMethod -Uri "http://127.0.0.1:7843/v1/health" -Headers @{ Authorization = "Bearer $token" } | Out-Null
+                $ready = $true
+                break
+              }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $ready) { throw "packaged daemon did not become ready" }
+          } finally {
+            if (-not $process.HasExited) {
+              Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
+              $process.WaitForExit()
+            }
+          }

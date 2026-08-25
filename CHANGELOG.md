@@ -5,6 +5,17 @@ Changelog conventions.
 
 ## [Unreleased]
 
+### Added
+
+- Added five binary-scoped SPDX 2.3 SBOMs generated from dependency metadata embedded in the exact
+  Linux/Windows CLI and daemon binaries plus the desktop executable extracted from the NSIS
+  installer, with subject-digest validation, checksums, and build attestations.
+- Added scheduled and release-triggered clean-consumer verification of public immutable tags,
+  manifests, checksums, attestations, SBOM-to-archive bindings, reversible demos, and authenticated
+  daemon startup on Linux and Windows.
+- Added a read-only package-publication rehearsal, deterministic multi-crate publish order, and an
+  evidence-based maintainer runbook for registry bootstrap and later OIDC trusted publishing.
+
 ### Fixed
 
 - Made release recovery rebuild an existing immutable annotated tag from protected `main`, and

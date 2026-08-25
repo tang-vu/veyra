@@ -141,6 +141,12 @@ if (existsSync(repositoryPath(releaseNotesPath))) {
   if (!allowRecovery) {
     markers.push("Syft 1.42.3", "release-manifest.json");
   }
+  const [major, minor, patch] = version.split(".").map(Number);
+  const hasBinaryScopedSboms =
+    major > 0 || minor > 1 || (minor === 1 && patch > 0);
+  if (hasBinaryScopedSboms) {
+    markers.push("cargo-auditable", "binary-scoped", "NSIS bootstrapper");
+  }
   for (const marker of markers) {
     check(
       releaseNotes.includes(marker),

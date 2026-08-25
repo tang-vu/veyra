@@ -32,8 +32,8 @@ execution boundary take priority over adapter count.
   ([tracking issue #4](https://github.com/tang-vu/veyra/issues/4))
 - Reproducible-build hardening and platform code signing. Tag releases prepare checksums and
   GitHub/Sigstore build-provenance attestations, but binaries and installers remain unsigned
-- Refine the multi-ecosystem repository SBOM into per-artifact dependency inventories tied directly
-  to each produced binary and installer
+- Extend the desktop payload SBOM with an installer-aware inventory of the NSIS bootstrapper and
+  non-Cargo native components; CLI, daemon, and desktop Rust payload inventories are implemented
 
 ## Before 1.0
 

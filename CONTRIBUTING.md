@@ -58,6 +58,9 @@ committed; build directories, credentials, local databases, and Playwright artif
 For package or release changes, inspect `cargo package --list` and `npm pack --dry-run --json` as
 described in [`RELEASING.md`](RELEASING.md). Public archives must carry their README and license;
 registry publication, tags, GitHub Releases, and repository settings remain maintainer-only actions.
+The [package publication guide](docs/maintainers/package-publishing.md) records the credential-free
+rehearsal and real-owner prerequisites; contributors and AI tools must not turn that rehearsal into a
+publish workflow.
 
 ## Fuzzing security boundaries
 
