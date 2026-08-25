@@ -69,12 +69,12 @@ alert that Tauri v2 cannot currently resolve; it remains open and is tracked in
 [issue #4](https://github.com/tang-vu/veyra/issues/4) with explicit exit criteria. The account does
 not expose the organization-only non-provider-pattern and validity-check options; default secret
 scanning and push protection remain enabled. The refreshed Scorecard findings include the tracked
-GTK advisory family and independent approvals/CODEOWNERS/last-push approval that cannot be satisfied
-by the sole maintainer. Repository age, contributor diversity, signed releases, and an OpenSSF Best
-Practices self-assessment require time or real human ownership. The private-reporting link and actual
-libFuzzer integration are maintained in source; do not dismiss a real alert, invent a reviewer, or
-add ceremonial files merely to raise the score. Package ownership and recovery access still require
-a manual quarterly review.
+Tauri GTK3/`glib`/`rust-unic` advisory set and independent approvals, CODEOWNERS review, and last-push
+approval that cannot be satisfied by the sole maintainer. Repository age, contributor diversity,
+signed releases, and an OpenSSF Best Practices self-assessment require time or real human ownership.
+The private-reporting link and actual libFuzzer integration are maintained in source; do not dismiss
+a real alert, invent a reviewer, or add ceremonial files merely to raise the score. Package ownership
+and recovery access still require a manual quarterly review.
 
 `CODEOWNERS`, sponsorship, package-registry publication, and signing identities require real named
 owners or accounts. The credential-free package rehearsal and activation prerequisites live in
