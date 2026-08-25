@@ -87,11 +87,14 @@ another resolved dependency calls that API, and this release produces a Windows 
 `deny.toml` carries one narrowly reasoned exception. Tauri's GTK3 and `rust-unic` transitives also
 carry unmaintained notices with no safe upstream upgrade. The security gate still denies all known
 vulnerabilities, direct unmaintained dependencies, other unsound advisories, wildcard dependencies,
-unknown registries, unknown Git sources, and unapproved licenses. Remove the exception as soon as
-Tauri moves off the affected GTK stack. [Issue #4](https://github.com/tang-vu/veyra/issues/4) tracks
-the upstream constraint and exit criteria; the Dependabot alert remains open. Re-review the issue
-before publishing any Linux desktop artifact. Linux CLI/server archives do not link this
-target-specific desktop graph.
+unknown registries, unknown Git sources, and unapproved licenses. `cargo audit --json` currently
+reports zero known vulnerabilities, 16 unmaintained transitive warnings, and this one unsound
+warning; OpenSSF Scorecard aggregates all 17 as a dependency finding. Remove the exception and the
+unmaintained paths as soon as Tauri supplies maintained replacements.
+[Issue #4](https://github.com/tang-vu/veyra/issues/4) records the exact advisory groups, dependency
+paths, and exit criteria; the Dependabot and Scorecard findings remain open. Re-review the issue
+before publishing any Linux desktop artifact. Linux CLI/server archives do not link the
+target-specific GTK graph.
 
 ## Explicit non-goals
 

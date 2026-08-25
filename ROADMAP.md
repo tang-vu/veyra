@@ -30,7 +30,8 @@ execution boundary take priority over adapter count.
 - First-class MCP interception example and A2A receipt exchange example
 - Broader Windows reparse-point and network-filesystem adversarial testing
 - Native no-replace rename support for filesystems that do not provide regular-file hard links
-- Removal of Tauri's transitive GTK3/`glib 0.18` audit exception when upstream supports a fixed stack
+- Removal of Tauri's advisory-bearing GTK3, `glib`, and `rust-unic` dependency paths when upstream
+  supports maintained replacements
   ([tracking issue #4](https://github.com/tang-vu/veyra/issues/4))
 - Reproducible-build hardening and platform code signing. Tag releases prepare checksums and
   GitHub/Sigstore build-provenance attestations, but binaries and installers remain unsigned

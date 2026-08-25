@@ -307,8 +307,8 @@ reviewed individually instead of being dismissed for a cleaner dashboard:
   approval, CODEOWNERS review, or last-push approval without inventing another maintainer;
 - the security-policy check found policy text but no direct reporting link;
 - no recognized fuzzing integration existed;
-- the vulnerability check counted 17 RustSec/OSV entries in Tauri's target-specific GTK3 dependency
-  family, while Dependabot exposed the one medium `glib` alert tracked in issue #4;
+- the vulnerability check counted 17 RustSec/OSV entries in Tauri's GTK3 and `rust-unic` dependency
+  graph, while Dependabot exposed the one medium `glib` alert tracked in issue #4;
 - code-review history has no independent approved changesets yet;
 - the repository is younger than 90 days; and
 - no OpenSSF Best Practices self-assessment has been submitted by a real project owner.
@@ -589,9 +589,21 @@ v0.1.0 asset, passed the 144-check legacy contract and exact GitHub-hosted signe
 proved unauthenticated denial and authenticated daemon health from clean Linux and Windows archives.
 The read-only hosted settings gate passed 72 assertions.
 
+The latest successful OpenSSF Scorecard analysis retains five diagnostics instead of hiding them.
+Branch protection scores 4 because independent approval, CODEOWNERS review, and last-push approval
+are not real with one maintainer; code review records 0 of 17 independently approved changesets; the
+repository is younger than 90 days; and no real owner has completed the Best Practices
+self-assessment. Its dependency finding aggregates 16 transitive `unmaintained` warnings and the one
+`glib` unsound warning. `cargo audit --json` reports `vulnerabilities.found=false`, while Dependabot
+retains the genuine medium `glib` alert. [Issue #4](https://github.com/tang-vu/veyra/issues/4) now
+tracks the complete Tauri advisory set, and
+[issue #24](https://github.com/tang-vu/veyra/issues/24) tracks the human governance/assessment gaps.
+No finding was dismissed for scorekeeping.
+
 The open [`v0.2.0` milestone](https://github.com/tang-vu/veyra/milestone/1) now contains eight scoped
 issues with reviewable exit criteria: supervised recovery, migration compatibility, installer/native
 inventory, real registry ownership and trusted publishing, Windows signing and measured
 reproducibility, real second-maintainer recovery, an independent trust-boundary review, and the
-existing GTK/`glib` advisory. It has no invented owner or delivery date. These remain real product,
-human, or external-dependency work; the passing OSS gates do not imply that they are complete.
+existing Tauri advisory-bearing dependency paths. It has no invented owner or delivery date. These
+remain real product, human, or external-dependency work; the passing OSS gates do not imply that they
+are complete.
