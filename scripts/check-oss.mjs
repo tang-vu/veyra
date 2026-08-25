@@ -595,6 +595,7 @@ const releaseWorkflow = readText(".github/workflows/release.yml");
 for (const marker of [
   "release_tag:",
   "release recovery must be dispatched from protected main",
+  "format('build-{0}', github.run_id)",
   'node scripts/check-release.mjs "$VEYRA_RELEASE_TAG" --require-tag',
   "ref: ${{ env.VEYRA_RELEASE_REF }}",
   "name: Release dependency SBOM",

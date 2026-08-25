@@ -68,3 +68,7 @@ GitHub API, requires a public non-prerelease immutable Release, verifies the exa
 signer while denying self-hosted build attestations, binds archive and installed desktop payloads to
 binary SBOM subjects, and runs version, demo, unauthenticated-denial, and authenticated-health probes
 from freshly downloaded Linux and Windows archives.
+
+An unpublishing build-only dispatch uses a run-scoped `build-<run-id>` evidence identifier rather
+than a branch name. This keeps SBOM paths stable and path-safe even when the source branch contains
+slashes, while real tag and protected recovery runs retain their exact `vX.Y.Z` asset names.
