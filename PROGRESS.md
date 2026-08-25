@@ -545,3 +545,53 @@ deterministic commit/verify/rollback demo. `oss:check` passed 516 assertions, th
 passed 67 checks, the public v0.1.0 verifier passed 144 checks, and actionlint 1.7.12 accepted all
 eight workflows. Protected GitHub CI and clean hosted consumer/rehearsal runs remain required before
 this change is complete.
+
+## 2026-08-25 - hosted OSS evidence and v0.2 backlog
+
+The binary-SBOM, release-consumer, and registry-rehearsal implementation was squash-merged through
+[pull request #17](https://github.com/tang-vu/veyra/pull/17) at
+`6069e4d16a777d92209dd0a6ebcf8918e6efb1c0`. All nine protected checks passed without a ruleset
+bypass. The first hosted rehearsals then found three evidence-boundary defects rather than silently
+passing them: immutable v0.1.0 notes predated the current absolute-link contract, Syft emitted one
+unversioned identity package for Rust PE files, and a slash-bearing dry-run branch name was unsafe as
+an SBOM path component.
+
+[Pull request #18](https://github.com/tang-vu/veyra/pull/18) added narrow, fail-closed fixes and was
+squash-merged at `7f0542b8b65d53de92058ca4c89f4961795a3b15`, again after all nine protected
+checks passed. The v0.1.0 exception accepts only its three frozen relative links and only in an
+explicit protected-main rehearsal. The PE validator accepts at most one name-bound binary identity
+whose metadata is either the exact version with CPE references or Syft's explicit unversioned form;
+an arbitrary non-Cargo package still fails. Build-only evidence now uses a path-safe, run-scoped
+identifier. Regression tests cover both accepted and rejected cases.
+
+The final PR-head [release build-only run](https://github.com/tang-vu/veyra/actions/runs/32806640474)
+passed the release contract, path-safe repository SBOM, Linux and Windows packaged smoke tests,
+Windows NSIS build and extraction, all five exact binary SBOM validations, and artifact uploads while
+correctly skipping publication and attestations. Its tree is identical to the squash-merge tree.
+Pinned Syft reported 189 Cargo packages for each CLI binary, 186 for each daemon binary, and 311 for
+the exact desktop payload extracted from NSIS. The recorded subject SHA-256 values were:
+
+```text
+599b4058d654900f5286819bce7413af0916201f504d9b37c5a9c5607b4c3b68  Linux CLI
+6cbe024566af65b95057951f4b95cc6fe66e4a4ef0c08a4426848084f3268f17  Linux daemon
+646d2730e331d1b1eef90ee2a8143e3ee608d4ee14f0a10dbf666f940f2b6aa8  Windows CLI
+d75570ef96ba8c7610657a413519e4c5543b53e3c2db4007aafce1f554886664  Windows daemon
+3616548e61a6c5e97c0c18bae51b05c7aaaa1c5bb693c2a4a1c3821ce49f1ae8  Windows desktop payload
+```
+
+Two post-merge consumer gates then passed on protected `main` at the merge commit. The
+[package rehearsal](https://github.com/tang-vu/veyra/actions/runs/32807230908) passed 30 release
+assertions, seven Rust plus two npm archive checks, the 67-check dependency-first publication plan,
+one compiling Cargo dry run, and two public-access npm dry runs in 44 seconds without OIDC,
+credentials, or registry writes. The
+[release consumer](https://github.com/tang-vu/veyra/actions/runs/32807233301) downloaded every public
+v0.1.0 asset, passed the 144-check legacy contract and exact GitHub-hosted signer verification, then
+proved unauthenticated denial and authenticated daemon health from clean Linux and Windows archives.
+The read-only hosted settings gate passed 72 assertions.
+
+The open [`v0.2.0` milestone](https://github.com/tang-vu/veyra/milestone/1) now contains eight scoped
+issues with reviewable exit criteria: supervised recovery, migration compatibility, installer/native
+inventory, real registry ownership and trusted publishing, Windows signing and measured
+reproducibility, real second-maintainer recovery, an independent trust-boundary review, and the
+existing GTK/`glib` advisory. It has no invented owner or delivery date. These remain real product,
+human, or external-dependency work; the passing OSS gates do not imply that they are complete.

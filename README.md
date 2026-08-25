@@ -230,7 +230,9 @@ vulnerability reporting guidance.
 ## Status
 
 Veyra is pre-1.0. The filesystem vertical slice and its security invariants are implemented and
-tested; wire compatibility may still change before 1.0. See [`ROADMAP.md`](ROADMAP.md) and
-[`CHANGELOG.md`](CHANGELOG.md).
+tested; wire compatibility may still change before 1.0. The evidence-backed
+[`v0.2.0` milestone](https://github.com/tang-vu/veyra/milestone/1) has no promised delivery date and
+tracks the remaining release, recovery, migration, supply-chain, and independent-review work. See
+[`ROADMAP.md`](ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Licensed under Apache-2.0. See [`LICENSE`](LICENSE).
